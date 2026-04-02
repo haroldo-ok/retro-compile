@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>retro-compile demo</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #0f0f11;
+    color: #e2e0d8;
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    grid-template-columns: 280px 1fr 320px;
+    grid-template-areas:
+      "header header header"
+      "sidebar editor output"
+      "footer footer footer";
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    grid-area: header;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 20px;
+    background: #18181c;
+    border-bottom: 1px solid #2a2a30;
+  }
+  header h1 { font-size: 15px; font-weight: 600; color: #fff; letter-spacing: -0.3px; }
+  header span { font-size: 12px; color: #666; }
+  .compile-btn {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 18px;
+    background: #5b4cf0;
+    color: #fff;
+    border: none; border-radius: 6px;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .compile-btn:hover  { background: #6e5ff5; }
+  .compile-btn:active { background: #4a3de0; }
+  .compile-btn:disabled { background: #333; color: #666; cursor: not-allowed; }
+  .spinner { display: none; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+  .compiling .spinner { display: block; }
+  .compiling .btn-label::before { content: 'Compiling'; }
+  .btn-label::before { content: 'Compile'; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Sidebar ── */
+  aside {
+    grid-area: sidebar;
+    background: #141418;
+    border-right: 1px solid #2a2a30;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .section-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: #555;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .platform-list { display: flex; flex-direction: column; gap: 2px; }
+  .platform-btn {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: #9090a0;
+    font-size: 13px;
+    text-align: left;
+    width: 100%;
+    transition: background 0.1s, color 0.1s;
+  }
+  .platform-btn:hover { background: #1e1e24; color: #d0d0e0; }
+  .platform-btn.active { background: #24203a; color: #a090ff; }
+  .platform-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+  .platform-info { display: flex; flex-direction: column; gap: 1px; }
+  .platform-name { font-size: 13px; }
+  .platform-cpu  { font-size: 10px; color: #555; }
+  .platform-btn.active .platform-cpu { color: #6050aa; }
+
+  .lang-toggle {
+    display: flex;
+    gap: 6px;
+  }
+  .lang-btn {
+    flex: 1;
+    padding: 6px;
+    border: 1px solid #2a2a30;
+    border-radius: 5px;
+    background: transparent;
+    color: #666;
+    font-size: 12px;
+    font-family: monospace;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .lang-btn.active { border-color: #5b4cf0; background: #1a1530; color: #9080ff; }
+
+  /* ── Editor ── */
+  .editor-wrap {
+    grid-area: editor;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .editor-bar {
+    padding: 6px 16px;
+    background: #16161a;
+    border-bottom: 1px solid #222228;
+    font-size: 11px;
+    color: #555;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .editor-bar .filename { color: #888; font-family: monospace; }
+  textarea {
+    flex: 1;
+    background: #0d0d10;
+    color: #c8c6c0;
+    border: none;
+    padding: 20px;
+    font-family: 'Menlo', 'Consolas', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
+    tab-size: 2;
+  }
+  textarea::selection { background: #3a3060; }
+
+  /* ── Output panel ── */
+  .output-panel {
+    grid-area: output;
+    background: #111115;
+    border-left: 1px solid #2a2a30;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .output-tabs {
+    display: flex;
+    border-bottom: 1px solid #222228;
+    padding: 0 12px;
+  }
+  .tab {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #555;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s;
+  }
+  .tab:hover { color: #888; }
+  .tab.active { color: #a090ff; border-bottom-color: #5b4cf0; }
+
+  .tab-content { flex: 1; overflow-y: auto; padding: 14px; display: none; }
+  .tab-content.active { display: block; }
+
+  /* Errors */
+  .error-list { display: flex; flex-direction: column; gap: 8px; }
+  .error-item {
+    padding: 10px 12px;
+    border-radius: 6px;
+    border-left: 3px solid;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .error-item.error   { background: #1e1010; border-color: #802020; }
+  .error-item.warning { background: #1a1808; border-color: #706010; }
+  .error-loc  { font-family: monospace; color: #888; margin-bottom: 3px; font-size: 11px; }
+  .error-msg  { color: #d0c0c0; }
+  .error-item.warning .error-msg { color: #c8c080; }
+
+  /* ROM info */
+  .rom-info { display: flex; flex-direction: column; gap: 12px; }
+  .info-card {
+    background: #18181e;
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .info-label { font-size: 10px; color: #555; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; }
+  .info-value { font-family: monospace; font-size: 13px; color: #9090b0; }
+  .info-value.success { color: #50c080; }
+  .seg-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+  .seg-name { font-family: monospace; color: #8080a0; }
+  .seg-range { font-family: monospace; color: #555; font-size: 11px; }
+  .rom-bar-wrap { background: #1e1e24; border-radius: 4px; overflow: hidden; height: 8px; margin-top: 8px; display: flex; }
+  .rom-bar-used { background: #5b4cf0; transition: width 0.4s; }
+  .rom-bar-free { background: #2a2a38; flex: 1; }
+
+  .download-btn {
+    width: 100%;
+    padding: 9px;
+    background: #1e2030;
+    border: 1px solid #2a3060;
+    border-radius: 6px;
+    color: #6080c0;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: all 0.15s;
+    margin-top: 4px;
+  }
+  .download-btn:hover { background: #242840; color: #8090d0; }
+  .download-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Log */
+  .log-area {
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    color: #555;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log-area .ok  { color: #408040; }
+  .log-area .err { color: #904040; }
+  .log-area .inf { color: #404880; }
+
+  /* Empty state */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%;
+    color: #333;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .empty-icon { font-size: 32px; opacity: 0.5; }
+
+  /* Footer */
+  footer {
+    grid-area: footer;
+    background: #0c0c0e;
+    border-top: 1px solid #1e1e24;
+    padding: 6px 20px;
+    font-size: 11px;
+    color: #444;
+    display: flex; gap: 16px; align-items: center;
+  }
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #304830;
+    flex-shrink: 0;
+  }
+  .status-dot.ready { background: #308050; }
+  .status-dot.busy  { background: #504830; animation: pulse 1s ease-in-out infinite; }
+  .status-dot.error { background: #803030; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>retro-compile</h1>
+  <span>in-browser retro toolchain</span>
+  <button class="compile-btn" id="compileBtn" onclick="doCompile()">
+    <div class="spinner"></div>
+    <span class="btn-label"></span>
+  </button>
+</header>
+
+<aside>
+  <div>
+    <div class="section-title">Platform</div>
+    <div class="platform-list" id="platformList"></div>
+  </div>
+  <div>
+    <div class="section-title">Language</div>
+    <div class="lang-toggle">
+      <button class="lang-btn active" id="langC"   onclick="setLang('c')">C</button>
+      <button class="lang-btn"        id="langAsm" onclick="setLang('asm')">ASM</button>
+    </div>
+  </div>
+</aside>
+
+<div class="editor-wrap">
+  <div class="editor-bar">
+    <span>Source</span>
+    <span class="filename" id="editorFilename">main.c</span>
+    <span id="editorInfo"></span>
+  </div>
+  <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+</div>
+
+<div class="output-panel">
+  <div class="output-tabs">
+    <div class="tab active" onclick="showTab('rom')">ROM info</div>
+    <div class="tab"        onclick="showTab('errors')">Errors</div>
+    <div class="tab"        onclick="showTab('log')">Log</div>
+  </div>
+  <div class="tab-content active" id="tab-rom">
+    <div class="empty-state" id="romEmpty">
+      <div class="empty-icon">◎</div>
+      <div>No ROM yet — hit Compile</div>
+    </div>
+    <div class="rom-info" id="romInfo" style="display:none"></div>
+  </div>
+  <div class="tab-content" id="tab-errors">
+    <div class="empty-state" id="errorsEmpty">
+      <div class="empty-icon">✓</div>
+      <div>No errors</div>
+    </div>
+    <div class="error-list" id="errorList"></div>
+  </div>
+  <div class="tab-content" id="tab-log">
+    <div class="log-area" id="logArea"></div>
+  </div>
+</div>
+
+<footer>
+  <div class="status-dot" id="statusDot"></div>
+  <span id="statusText">Initialising…</span>
+</footer>
+
+<script type="module">
+// ─────────────────────────────────────────────────────────────────────────────
+// Platform + sample code definitions
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PLATFORMS = [
+  {
+    id: 'gb', name: 'Game Boy', cpu: 'SM83 / gbz80', icon: '🎮',
+    c: `// Nintendo Game Boy — C via SDCC + GBDK
+#include <gb/gb.h>
+
+void main(void) {
+  // Infinite loop — your game logic goes here
+  while(1) {
+    wait_vbl_done();
+  }
+}`,
+    asm: `; Game Boy Z80 assembly (SDAS syntax)
+  .area _HOME
+  .area _CODE
+
+start::
+  ; Disable interrupts
+  di
+  ; Infinite loop
+loop:
+  halt
+  nop
+  jr loop`,
+  },
+  {
+    id: 'coleco', name: 'ColecoVision', cpu: 'Z80', icon: '🕹️',
+    c: `// ColecoVision — C via SDCC + libcv
+#include <cv.h>
+
+void main(void) {
+  cv_set_screen_mode(CV_TEXTMODE_1);
+  cv_puts(10, 12, 0, "HELLO COLECO!");
+  while(1) {}
+}`,
+    asm: `; ColecoVision Z80 assembly
+  .area _HOME
+  .area _CODE
+
+start::
+  ; Set stack pointer
+  ld  sp, #0x8000
+loop:
+  halt
+  jr  loop`,
+  },
+  {
+    id: 'nes', name: 'NES', cpu: '6502 (RP2A03)', icon: '🎯',
+    c: `// Nintendo NES — C via CC65 + neslib2
+#include <nes.h>
+
+void main(void) {
+  // Turn off rendering while we set up
+  ppu_off();
+  // Clear the nametable
+  vram_adr(NAMETABLE_A);
+  vram_fill(0, 0x400);
+  // Enable rendering
+  ppu_on_all();
+  // Spin forever
+  while(1) {}
+}`,
+    asm: `; NES 6502 assembly (CA65 syntax)
+  .segment "CODE"
+
+  .proc main
+    ; Disable NMI and rendering
+    lda #0
+    sta $2000
+    sta $2001
+forever:
+    jmp forever
+  .endproc
+
+  .segment "VECTORS"
+    .word 0, main, 0`,
+  },
+  {
+    id: 'c64', name: 'Commodore 64', cpu: '6510 (6502)', icon: '💾',
+    c: `// Commodore 64 — C via CC65
+#include <c64.h>
+#include <stdio.h>
+
+void main(void) {
+  // Clear screen and print
+  clrscr();
+  printf("HELLO, C64!\\n");
+  // Wait forever
+  while(1) {}
+}`,
+    asm: `; C64 6502 assembly (CA65 syntax)
+  .segment "CODE"
+
+start:
+  ; JSR to BASIC clear screen ($E544)
+  jsr $E544
+forever:
+  jmp forever
+
+  .segment "STARTUP"
+  ; BASIC SYS stub at $0801
+  .byte $0B,$08,$01,$00,$9E,$32,$30,$36,$31,$00,$00,$00
+  .org $080B
+  jmp start`,
+  },
+  {
+    id: 'vcs', name: 'Atari 2600', cpu: '6507 (6502)', icon: '📺',
+    c: `// Atari 2600 VCS — C via CC65
+// Minimal kernel: solid-colour screen
+#include <atari2600.h>
+
+void main(void) {
+  // Set background colour (NTSC blue)
+  COLUBK = 0x84;
+  while(1) {
+    // Minimal scanline loop — a real game needs
+    // precise cycle counting here.
+  }
+}`,
+    asm: `; Atari 2600 minimal kernel (CA65 syntax)
+  .segment "CODE"
+
+start:
+  sei           ; disable interrupts
+  cld           ; clear decimal mode
+  ldx #$FF
+  txs           ; init stack
+
+  ; VSYNC
+  lda #2
+  sta VSYNC
+  sta WSYNC
+  sta WSYNC
+  sta WSYNC
+  lda #0
+  sta VSYNC
+
+forever:
+  jmp forever
+
+  .segment "VECTORS"
+  .word start  ; NMI
+  .word start  ; RESET
+  .word start  ; IRQ`,
+  },
+  {
+    id: 'msx', name: 'MSX', cpu: 'Z80', icon: '🖥️',
+    c: `// MSX — C via SDCC
+// Basic MSX ROM program
+void main(void) {
+  // Write directly to VRAM text area
+  // (address 0x1800 in screen mode 1)
+  volatile unsigned char *vram = (unsigned char *)0x1800;
+  const char *msg = "HELLO MSX";
+  while(*msg) *vram++ = *msg++;
+  while(1) {}
+}`,
+    asm: `; MSX Z80 assembly (SDAS syntax)
+  .area _HOME
+  .area _CODE
+
+start::
+  ; MSX BIOS CHPUT — print 'H'
+  ld  a, #72
+  call 0x00A2
+loop:
+  halt
+  jr  loop`,
+  },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────────────
+
+let currentPlatform = PLATFORMS[0];
+let currentLang     = 'c';
+let lastRom         = null;
+let compileLib      = null;  // the retro-compile module
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function log(msg, cls = '') {
+  const el = document.getElementById('logArea');
+  const line = document.createElement('span');
+  if (cls) line.className = cls;
+  line.textContent = msg + '\n';
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(text, state = 'ready') {
+  document.getElementById('statusText').textContent = text;
+  const dot = document.getElementById('statusDot');
+  dot.className = 'status-dot ' + state;
+}
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    t.classList.toggle('active', ['rom','errors','log'][i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(tc => {
+    tc.classList.toggle('active', tc.id === 'tab-' + name);
+  });
+}
+
+function setBusy(busy) {
+  const btn = document.getElementById('compileBtn');
+  btn.disabled = busy;
+  btn.classList.toggle('compiling', busy);
+  setStatus(busy ? 'Compiling…' : 'Ready', busy ? 'busy' : 'ready');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Platform / language switching
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildPlatformList() {
+  const list = document.getElementById('platformList');
+  list.innerHTML = '';
+  for (const p of PLATFORMS) {
+    const btn = document.createElement('button');
+    btn.className = 'platform-btn' + (p.id === currentPlatform.id ? ' active' : '');
+    btn.innerHTML = `
+      <span class="platform-icon">${p.icon}</span>
+      <span class="platform-info">
+        <span class="platform-name">${p.name}</span>
+        <span class="platform-cpu">${p.cpu}</span>
+      </span>`;
+    btn.onclick = () => selectPlatform(p);
+    list.appendChild(btn);
+  }
+}
+
+function selectPlatform(p) {
+  currentPlatform = p;
+  buildPlatformList();
+  loadSample();
+}
+
+function setLang(lang) {
+  currentLang = lang;
+  document.getElementById('langC').classList.toggle('active', lang === 'c');
+  document.getElementById('langAsm').classList.toggle('active', lang === 'asm');
+  document.getElementById('editorFilename').textContent = lang === 'c' ? 'main.c' : 'main.asm';
+  loadSample();
+}
+
+function loadSample() {
+  const src = currentPlatform[currentLang] ?? currentPlatform.c;
+  document.getElementById('editor').value = src;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compilation
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function doCompile() {
+  if (!compileLib) {
+    log('Library not ready yet', 'err');
+    showTab('log');
+    return;
+  }
+
+  setBusy(true);
+  clearResults();
+  showTab('rom');
+
+  const source = document.getElementById('editor').value;
+  log(`Compiling for ${currentPlatform.name} (${currentLang})…`, 'inf');
+
+  try {
+    const t0 = performance.now();
+    const result = await compileLib.compile({
+      platform: currentPlatform.id,
+      language: currentLang,
+      source,
+    });
+    const ms = (performance.now() - t0).toFixed(0);
+
+    if (result.ok) {
+      log(`✓ Compiled in ${ms}ms — ROM: ${result.rom.length} bytes`, 'ok');
+      lastRom = result.rom;
+      showRomInfo(result, ms);
+      showTab('rom');
+    } else {
+      log(`✗ ${result.errors.length} error(s) in ${ms}ms`, 'err');
+      showErrors(result.errors);
+      showTab('errors');
+    }
+  } catch (e) {
+    log(`Internal error: ${e.message}`, 'err');
+    showTab('log');
+    setStatus('Error', 'error');
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Results rendering
+// ─────────────────────────────────────────────────────────────────────────────
+
+function clearResults() {
+  document.getElementById('romEmpty').style.display = '';
+  document.getElementById('romInfo').style.display = 'none';
+  document.getElementById('romInfo').innerHTML = '';
+  document.getElementById('errorList').innerHTML = '';
+  document.getElementById('errorsEmpty').style.display = '';
+  lastRom = null;
+}
+
+function showRomInfo(result, ms) {
+  const romSize    = result.rom.length;
+  const profile    = currentPlatform;
+  const maxRomSize = 0x8000; // approximate — show bar anyway
+
+  document.getElementById('romEmpty').style.display = 'none';
+  const el = document.getElementById('romInfo');
+  el.style.display = 'flex';
+
+  const usedPct = Math.min(100, (romSize / maxRomSize * 100)).toFixed(1);
+
+  // Segments table
+  let segsHtml = '';
+  if (result.segments?.length) {
+    segsHtml = result.segments.map(s => `
+      <div class="seg-row">
+        <span class="seg-name">${s.name}</span>
+        <span class="seg-range">
+          0x${s.start.toString(16).padStart(4,'0')}
+          +${s.size}B
+          <span style="color:${s.type==='rom'?'#5b4cf0':s.type==='ram'?'#408060':'#444'}">${s.type??''}</span>
+        </span>
+      </div>`).join('');
+  }
+
+  // Symbol count
+  const symCount = Object.keys(result.symbols ?? {}).length;
+
+  el.innerHTML = `
+    <div class="info-card">
+      <div class="info-label">Status</div>
+      <div class="info-value success">✓ Compiled OK in ${ms}ms</div>
+    </div>
+    <div class="info-card">
+      <div class="info-label">ROM size</div>
+      <div class="info-value">${romSize.toLocaleString()} bytes</div>
+      <div class="rom-bar-wrap" title="${usedPct}% of ~${(maxRomSize/1024).toFixed(0)}KB">
+        <div class="rom-bar-used" style="width:${usedPct}%"></div>
+        <div class="rom-bar-free"></div>
+      </div>
+    </div>
+    ${result.segments?.length ? `
+    <div class="info-card">
+      <div class="info-label">Segments (${result.segments.length})</div>
+      ${segsHtml}
+    </div>` : ''}
+    ${symCount ? `
+    <div class="info-card">
+      <div class="info-label">Exported symbols</div>
+      <div class="info-value">${symCount} symbols</div>
+    </div>` : ''}
+    <button class="download-btn" onclick="downloadRom()">
+      ⬇ Download .rom
+    </button>`;
+}
+
+function showErrors(errors) {
+  document.getElementById('errorsEmpty').style.display = errors.length ? 'none' : '';
+  const list = document.getElementById('errorList');
+  list.innerHTML = '';
+  for (const e of errors) {
+    const item = document.createElement('div');
+    item.className = `error-item ${e.severity}`;
+    const loc = [e.path, e.line ? `line ${e.line}` : null].filter(Boolean).join(':');
+    item.innerHTML = `
+      ${loc ? `<div class="error-loc">${loc}</div>` : ''}
+      <div class="error-msg">${escHtml(e.message)}</div>`;
+    list.appendChild(item);
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function downloadRom() {
+  if (!lastRom) return;
+  const blob = new Blob([lastRom], { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${currentPlatform.id}-output.rom`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// Expose for onclick
+window.doCompile   = doCompile;
+window.downloadRom = downloadRom;
+window.showTab     = showTab;
+window.setLang     = setLang;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Initialise
+// ─────────────────────────────────────────────────────────────────────────────
+
+buildPlatformList();
+loadSample();
+
+// Try to load the real library from the local dist/ directory.
+// In production: replace the URL with your CDN path.
+const LIB_URL = './dist/index.js';
+
+log('Loading retro-compile…', 'inf');
+setStatus('Loading library…', 'busy');
+
+try {
+  compileLib = await import(LIB_URL);
+
+  log('Calling init()…', 'inf');
+  await compileLib.init({
+    baseUrl: './dist/assets/',
+  });
+
+  log('✓ Ready', 'ok');
+  setStatus('Ready', 'ready');
+  document.getElementById('compileBtn').disabled = false;
+} catch (e) {
+  log(`Could not load retro-compile: ${e.message}`, 'err');
+  log('', '');
+  log('To run this demo:', 'inf');
+  log('  1. Run: node build.mjs', 'inf');
+  log('  2. Run: node scripts/build-vendor.mjs --8bws /path/to/8bitworkshop', 'inf');
+  log('  3. Run: node scripts/copy-assets.mjs  --8bws /path/to/8bitworkshop', 'inf');
+  log('  4. Serve this directory (e.g. npx serve .)', 'inf');
+  setStatus('Library not loaded — see Log tab', 'error');
+  showTab('log');
+}
+</script>
+</body>
+</html>
