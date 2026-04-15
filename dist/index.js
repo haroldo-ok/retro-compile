@@ -112,15 +112,16 @@ function assertInitialised() {
 }
 /**
  * Resolve the URL of the Web Worker bundle.
- * In ESM: co-located with the main bundle.
- * Falls back to a predictable path relative to the base URL.
+ * tsc emits src/worker/worker.ts → dist/worker/worker.js
+ * The main bundle sits at dist/index.js, so the worker is one subdir deeper.
  */
 function resolveWorkerUrl() {
     try {
-        return new URL('./worker.js', import.meta.url).href;
+        // import.meta.url = .../dist/index.js  →  worker is at ./worker/worker.js
+        return new URL('./worker/worker.js', import.meta.url).href;
     }
     catch {
-        return _baseUrl + 'worker.js';
+        return _baseUrl + 'worker/worker.js';
     }
 }
 /**
