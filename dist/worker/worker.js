@@ -10,12 +10,26 @@ const _loadedScripts = new Set();
 const _wasmBinaries = {};
 const _fsMeta = {};
 const _fsBlob = {};
-// Emscripten shims
+// Emscripten shims — some of these (self, window) are read-only getters on
+// WorkerGlobalScope, so we use defineProperty and swallow errors gracefully.
 const g = globalThis;
-g['self'] = globalThis;
-g['window'] = globalThis;
+function shimGlobal(key, value) {
+    if (g[key] === value)
+        return; // already correct, nothing to do
+    try {
+        Object.defineProperty(globalThis, key, {
+            value, writable: true, configurable: true,
+        });
+    }
+    catch {
+        // Read-only and non-configurable — already the right value in a Worker
+        // context (e.g. self === globalThis), so safe to ignore.
+    }
+}
+shimGlobal('self', globalThis);
+shimGlobal('window', globalThis);
 if (!g['location'])
-    g['location'] = { href: './' };
+    shimGlobal('location', { href: './' });
 // ---------------------------------------------------------------------------
 // Asset loading
 // ---------------------------------------------------------------------------

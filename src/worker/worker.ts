@@ -20,11 +20,25 @@ const _wasmBinaries: Record<string, Uint8Array> = {};
 const _fsMeta: Record<string, unknown> = {};
 const _fsBlob: Record<string, unknown> = {};
 
-// Emscripten shims
+// Emscripten shims — some of these (self, window) are read-only getters on
+// WorkerGlobalScope, so we use defineProperty and swallow errors gracefully.
 const g = globalThis as Record<string, unknown>;
-g['self']   = globalThis;
-g['window'] = globalThis;
-if (!g['location']) g['location'] = { href: './' };
+
+function shimGlobal(key: string, value: unknown) {
+  if (g[key] === value) return; // already correct, nothing to do
+  try {
+    Object.defineProperty(globalThis, key, {
+      value, writable: true, configurable: true,
+    });
+  } catch {
+    // Read-only and non-configurable — already the right value in a Worker
+    // context (e.g. self === globalThis), so safe to ignore.
+  }
+}
+
+shimGlobal('self',   globalThis);
+shimGlobal('window', globalThis);
+if (!g['location']) shimGlobal('location', { href: './' });
 
 // ---------------------------------------------------------------------------
 // Asset loading
