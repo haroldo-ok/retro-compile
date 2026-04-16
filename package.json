@@ -10,23 +10,22 @@
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.cjs",
-      "types":   "./dist/index.d.ts"
+      "types": "./dist/index.d.ts"
     },
     "./worker": {
-      "import": "./dist/worker.js"
+      "import": "./dist/worker/worker.js"
     }
   },
-  "files": ["dist", "scripts", "README.md"],
+  "files": ["dist", "scripts", "README.md", "CHANGELOG.md", "CONTRIBUTING.md"],
   "scripts": {
-    "build":          "node build.mjs",
+    "build":          "tsc",
     "typecheck":      "tsc --noEmit",
     "test":           "node test/integration.test.mjs",
-    "build:vendor":   "node scripts/build-vendor.mjs",
+    "bundle:vendor":  "node scripts/bundle-vendor-node.mjs",
     "copy:assets":    "node scripts/copy-assets.mjs",
     "demo":           "npx serve . -p 4321"
   },
   "devDependencies": {
-    "esbuild":    "^0.25.0",
     "typescript": "^5.9.2",
     "@types/node": "^22.0.0"
   },

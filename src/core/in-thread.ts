@@ -1,30 +1,21 @@
 // ─── In-thread compiler (noWorker mode) ─────────────────────────────────────
-// Runs the build pipeline directly on the calling thread.
-// Used when Web Workers are unavailable (Node.js, restricted origins, tests).
-// Will block the thread during compilation — warn callers accordingly.
+// Runs the build pipeline directly on the calling thread — no Web Worker.
+// Used for Node.js environments (CLI, testing, SSR).
 
 import type { CompileOptions, CompileResult } from '../types.js';
-import type { PlatformProfile } from '../platforms/profiles.js';
 import { PLATFORM_PROFILES } from '../platforms/profiles.js';
 import type { Platform, Language } from '../types.js';
+import type { PlatformProfile } from '../platforms/profiles.js';
 import { normaliseErrors } from './errors.js';
 
-// ---------------------------------------------------------------------------
-// Node.js / browser-agnostic fetch
-// In Node 18+ fetch is global. In Node 16 we need the node-fetch polyfill
-// or the caller to provide it. We do a best-effort check.
-// ---------------------------------------------------------------------------
+let _baseUrl = './';
 
-function getFetch(): typeof fetch {
-  if (typeof fetch === 'function') return fetch;
-  throw new Error(
-    'retro-compile (noWorker): fetch is not available. ' +
-    'Use Node 18+ or install a fetch polyfill.'
-  );
+export function configureInThread(baseUrl: string) {
+  _baseUrl = baseUrl;
 }
 
 // ---------------------------------------------------------------------------
-// Engine loading — same logic as worker.ts but synchronous-compatible
+// Engine loading
 // ---------------------------------------------------------------------------
 
 interface InThreadEngine {
@@ -36,39 +27,30 @@ interface InThreadEngine {
 }
 
 let _engine: InThreadEngine | null = null;
-let _baseUrl = './';
 const _fsMeta: Record<string, unknown> = {};
 const _fsBlob: Record<string, unknown> = {};
 
-export function configureInThread(baseUrl: string) {
-  _baseUrl = baseUrl;
+function getFetch(): typeof fetch {
+  if (typeof fetch === 'function') return fetch;
+  throw new Error('retro-compile (noWorker): fetch unavailable. Use Node 18+.');
 }
 
 async function ensureEngine(): Promise<InThreadEngine> {
   if (_engine) return _engine;
-
   const f = getFetch();
-  const bundleUrl = `${_baseUrl}vendor/builder-bundle.js`;
-  const res = await f(bundleUrl);
+  const res = await f(`${_baseUrl}vendor/builder-bundle.js`);
   if (!res.ok) throw new Error(`retro-compile: cannot load engine bundle (${res.status})`);
   const code = await res.text();
-
-  // In Node.js we use vm.runInThisContext so the bundle has access to globalThis.
-  // We access require via globalThis to avoid needing @types/node.
   try {
-    const _require = (globalThis as Record<string, unknown>)['require'] as ((m: string) => { runInThisContext?: (code: string) => void }) | undefined;
-    const vm = _require?.('vm');
-    if (vm?.runInThisContext) {
-      vm.runInThisContext(code);
-    } else {
-      // eslint-disable-next-line no-new-func
-      new Function(code)();
-    }
+    // Use vm.runInThisContext in Node so the bundle has access to globalThis
+    const _req = (globalThis as Record<string, unknown>)['require'] as
+      ((m: string) => { runInThisContext?: (code: string) => void }) | undefined;
+    const vm = _req?.('vm');
+    if (vm?.runInThisContext) vm.runInThisContext(code);
+    else new Function(code)(); // eslint-disable-line no-new-func
   } catch {
-    // eslint-disable-next-line no-new-func
-    new Function(code)();
+    new Function(code)(); // eslint-disable-line no-new-func
   }
-
   const eng = (globalThis as Record<string, unknown>)['retroCompileEngine'] as InThreadEngine | undefined;
   if (!eng) throw new Error('retro-compile: builder-bundle.js did not register retroCompileEngine');
   eng.configure?.({ baseUrl: _baseUrl });
@@ -92,7 +74,7 @@ async function ensureFilesystem(name: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Profile → params
+// Build helpers
 // ---------------------------------------------------------------------------
 
 function profileToParams(p: PlatformProfile): Record<string, unknown> {
@@ -112,7 +94,7 @@ function firstTool(profile: PlatformProfile, language: Language): string {
 }
 
 // ---------------------------------------------------------------------------
-// Public compile function (in-thread)
+// Public compile function
 // ---------------------------------------------------------------------------
 
 export async function compileInThread(opts: CompileOptions): Promise<CompileResult> {
@@ -123,10 +105,11 @@ export async function compileInThread(opts: CompileOptions): Promise<CompileResu
   if (!profile) {
     return { ok: false, errors: [{ line: 0, message: `Unknown platform: ${platform}`, severity: 'error' }] };
   }
+  if (profile.unavailable) {
+    return { ok: false, errors: [{ line: 0, message: profile.unavailable, severity: 'error' }] };
+  }
 
-  // Load FS packs
-  await Promise.all(profile.filesystems.map(f => ensureFilesystem(f)));
-
+  await Promise.all(profile.filesystems.map((f: string) => ensureFilesystem(f)));
   const engine = await ensureEngine();
   engine.PLATFORM_PARAMS[platform] = profileToParams(profile);
 
@@ -147,7 +130,11 @@ export async function compileInThread(opts: CompileOptions): Promise<CompileResu
   if ('errors' in result) {
     const raw = result['errors'] as Array<Record<string, unknown>>;
     if (raw?.length) {
-      return { ok: false, errors: normaliseErrors(raw.map(e => ({ line: (e['line'] as number) ?? 0, msg: (e['msg'] as string) ?? 'Error', path: e['path'] as string | undefined }))) };
+      return { ok: false, errors: normaliseErrors(raw.map(e => ({
+        line: (e['line'] as number) ?? 0,
+        msg: (e['msg'] as string) ?? 'Error',
+        path: e['path'] as string | undefined,
+      }))) };
     }
   }
 
@@ -155,9 +142,8 @@ export async function compileInThread(opts: CompileOptions): Promise<CompileResu
     const symbols  = (result['symbolmap'] as Record<string, number>) ?? {};
     const segments = ((result['segments'] as Array<Record<string, unknown>>) ?? []).map(s => ({
       name: s['name'] as string, start: s['start'] as number, size: s['size'] as number,
-      type: (s['type'] === 'rom' || s['type'] === 'ram') ? s['type'] as 'rom' | 'ram' : null,
+      type: (s['type'] === 'rom' || s['type'] === 'ram') ? s['type'] as 'rom'|'ram' : null,
     }));
-
     let rom = result['output'] as Uint8Array;
     if (profile.gbChecksumPatch) {
       rom = new Uint8Array(rom);
@@ -165,7 +151,6 @@ export async function compileInThread(opts: CompileOptions): Promise<CompileResu
       for (let a = 0x0134; a <= 0x014c; a++) cs = cs - rom[a] - 1;
       rom[0x014d] = cs & 0xff;
     }
-
     return { ok: true, rom, symbols, segments };
   }
 

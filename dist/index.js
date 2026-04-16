@@ -14,9 +14,8 @@ let _initiated = false;
 /**
  * Initialise retro-compile.
  *
- * Must be called once before `compile()` or `precompile()`. Spawns the
- * compiler Web Worker and waits for it to report ready.
- *
+ * Must be called once before `compile()` or `precompile()`. In Worker mode
+ * (the default) this spawns a Web Worker and waits for it to report ready.
  * Safe to call multiple times — idempotent after the first call.
  *
  * @example
@@ -31,8 +30,6 @@ export async function init(opts = {}) {
     _baseUrl = opts.baseUrl ?? detectBaseUrl();
     _noWorker = opts.noWorker ?? false;
     if (_noWorker) {
-        // In-thread mode: no Worker, compiles directly on calling thread.
-        // Useful in Node.js, test environments, and restricted origins.
         configureInThread(_baseUrl);
         return;
     }
@@ -46,21 +43,21 @@ export async function init(opts = {}) {
  * Warm up the compiler for a platform.
  *
  * Triggers background loading of the platform's Wasm toolchain and standard
- * library filesystem pack. Call this after `init()` and before the user is
- * likely to hit "Compile" to eliminate cold-start latency on the first build.
+ * library filesystem pack. Call after `init()` and before the user is likely
+ * to hit Compile to eliminate cold-start latency on the first build.
  *
- * Safe to call multiple times — assets are cached after first load.
+ * Safe to call multiple times and safe to call before `init()` (no-op).
  *
  * @example
  * ```ts
  * await init({ baseUrl: '...' });
- * precompile('gb');  // fire-and-forget — no need to await
+ * precompile('gb');  // fire-and-forget
  * ```
  */
 export function precompile(platform) {
-    if (_noWorker)
-        return; // in-thread mode: nothing to preload
-    _bridge?.precompile(platform);
+    if (!_bridge)
+        return; // not yet initialised — no-op
+    _bridge.precompile(platform);
 }
 // ---------------------------------------------------------------------------
 // compile()
@@ -68,14 +65,13 @@ export function precompile(platform) {
 /**
  * Compile source code for a retro platform.
  *
- * Resolves with a {@link CompileResult}. Discriminate on `.ok`:
- *
  * ```ts
  * const result = await compile({ platform: 'gb', source: myCode });
  * if (result.ok) {
  *   loadROM(result.rom); // Uint8Array — ready for any emulator
  * } else {
- *   for (const e of result.errors) console.error(`${e.path}:${e.line} ${e.message}`);
+ *   for (const e of result.errors)
+ *     console.error(`${e.path}:${e.line} ${e.message}`);
  * }
  * ```
  *
@@ -83,9 +79,8 @@ export function precompile(platform) {
  */
 export async function compile(opts) {
     assertInitialised();
-    if (_noWorker) {
+    if (_noWorker)
         return compileInThread(opts);
-    }
     return _bridge.compile(opts);
 }
 // ---------------------------------------------------------------------------
@@ -93,8 +88,7 @@ export async function compile(opts) {
 // ---------------------------------------------------------------------------
 /**
  * Shut down the compiler worker and release all resources.
- * After this call `compile()` and `precompile()` will throw until
- * `init()` is called again.
+ * After this call `compile()` will throw until `init()` is called again.
  */
 export function destroy() {
     _bridge?.terminate();
@@ -102,7 +96,7 @@ export function destroy() {
     _initiated = false;
 }
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Helpers
 // ---------------------------------------------------------------------------
 function assertInitialised() {
     if (!_initiated) {
@@ -110,24 +104,15 @@ function assertInitialised() {
             'Example: await init({ baseUrl: "/retro-compile/" });');
     }
 }
-/**
- * Resolve the URL of the Web Worker bundle.
- * tsc emits src/worker/worker.ts → dist/worker/worker.js
- * The main bundle sits at dist/index.js, so the worker is one subdir deeper.
- */
 function resolveWorkerUrl() {
     try {
-        // import.meta.url = .../dist/index.js  →  worker is at ./worker/worker.js
+        // import.meta.url = .../dist/index.js → worker is at ./worker/worker.js
         return new URL('./worker/worker.js', import.meta.url).href;
     }
     catch {
         return _baseUrl + 'worker/worker.js';
     }
 }
-/**
- * Best-effort detection of the base URL for asset loading.
- * Works in ESM (import.meta.url), degrades gracefully to './'.
- */
 function detectBaseUrl() {
     try {
         return new URL('./', import.meta.url).href;

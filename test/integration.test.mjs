@@ -1,15 +1,14 @@
-// test/integration.test.mjs
+// test/integration.test.mjs — full retro-compile test suite
+// Run with: node test/integration.test.mjs
 import assert from 'node:assert/strict';
 
 let passed = 0, failed = 0;
 const suites = [];
-
 function suite(name, fn) { suites.push({ name, fn }); }
 async function test(name, fn) {
   try { await fn(); console.log(`  ✓ ${name}`); passed++; }
   catch (e) { console.error(`  ✗ ${name}\n    ${e.message}`); failed++; }
 }
-
 async function tryImport(...paths) {
   for (const p of paths) { try { return await import(p); } catch {} }
   throw new Error(`Could not import any of: ${paths.join(', ')}`);
@@ -18,11 +17,10 @@ async function tryImport(...paths) {
 const profiles = await tryImport('../src/platforms/profiles.ts', '../dist/platforms/profiles.js');
 const errors   = await tryImport('../src/core/errors.ts',        '../dist/core/errors.js');
 const api      = await tryImport('../src/index.ts',              '../dist/index.js');
-
 const { PLATFORM_PROFILES, getProfile } = profiles;
 const { normaliseErrors, makeMsvcMatcher, makeSdasMatcher, makeSdldMatcher, makeMcppMatcher, makeCa65Matcher } = errors;
 
-// ── Platform profile validation ──────────────────────────────────────────────
+// ── Platform profiles ─────────────────────────────────────────────────────────
 suite('Platform profiles', () => {
   const ALL = ['gb','coleco','msx','zx','mw8080bw','galaxian','base_z80',
                'nes','c64','vcs','apple2','atari8-800xl','vectrex','williams-z80'];
@@ -92,7 +90,7 @@ suite('Platform profiles', () => {
   });
 
   test('getProfile throws for unknown platforms', () => {
-    assert.throws(() => getProfile('snes'),     /unknown platform/i);
+    assert.throws(() => getProfile('snes'),       /unknown platform/i);
     assert.throws(() => getProfile('playstation'), /unknown platform/i);
   });
 });
@@ -211,8 +209,7 @@ suite('Game Boy checksum patch', () => {
     rom[0x014d] = cs & 0xff;
     return rom;
   }
-
-  // The GB boot ROM checks: x=0; for a in 0x134..0x14D: x=x-mem[a]-1; x&0xFF must equal 0xFF
+  // GB boot ROM check: x=0; for a in 0x134..0x14D: x=x-mem[a]-1; x&0xFF must be 0xFF
   function verify(rom) {
     let x = 0;
     for (let a = 0x0134; a <= 0x014d; a++) x = x - rom[a] - 1;
@@ -220,8 +217,7 @@ suite('Game Boy checksum patch', () => {
   }
 
   test('Patched ROM passes checksum verification', () => {
-    const rom = patch(new Uint8Array(0x8000));
-    assert.equal(verify(rom), 0xff);
+    assert.equal(verify(patch(new Uint8Array(0x8000))), 0xff);
   });
 
   test('All-zero header gets checksum 0xE7', () => {
@@ -230,47 +226,63 @@ suite('Game Boy checksum patch', () => {
     assert.equal(verify(rom), 0xff);
   });
 
-  test('Non-zero header bytes produce different checksum', () => {
+  test('Non-zero header bytes produce different but valid checksum', () => {
     const buf = new Uint8Array(0x8000);
-    buf[0x0134] = 0x47; // 'G'
-    buf[0x0135] = 0x42; // 'B'
+    buf[0x0134] = 0x47; buf[0x0135] = 0x42;
     const rom = patch(buf);
-    assert.notEqual(rom[0x014d], 0xe7);  // different from all-zero case
-    assert.equal(verify(rom), 0xff);      // but still passes verification
+    assert.notEqual(rom[0x014d], 0xe7);
+    assert.equal(verify(rom), 0xff);
   });
 });
 
 // ── URL rewriting ─────────────────────────────────────────────────────────────
-suite('Lib URL rewriting (XHR interceptor)', () => {
+suite('Lib URL rewriting', () => {
   const BASE = 'https://cdn.example.com/retro-compile/lib/';
-
-  function rewriteLibUrl(url, libBaseUrl) {
+  function rewrite(url) {
     const m = url.match(/(?:src\/worker\/)?lib\/(.+)$/);
-    if (m) return libBaseUrl + m[1];
-    return url;
+    return m ? BASE + m[1] : url;
   }
 
   test('Rewrites 8bws-relative lib paths', () => {
-    assert.equal(
-      rewriteLibUrl('../../src/worker/lib/coleco/crt0.rel', BASE),
-      BASE + 'coleco/crt0.rel'
-    );
+    assert.equal(rewrite('../../src/worker/lib/coleco/crt0.rel'), BASE + 'coleco/crt0.rel');
   });
-
   test('Rewrites short lib/ paths', () => {
-    assert.equal(rewriteLibUrl('lib/nes/crt0.o', BASE), BASE + 'nes/crt0.o');
+    assert.equal(rewrite('lib/nes/crt0.o'), BASE + 'nes/crt0.o');
   });
-
   test('Rewrites nested paths', () => {
-    assert.equal(
-      rewriteLibUrl('src/worker/lib/gb/gbz80.lib', BASE),
-      BASE + 'gb/gbz80.lib'
-    );
+    assert.equal(rewrite('src/worker/lib/gb/gbz80.lib'), BASE + 'gb/gbz80.lib');
   });
-
   test('Leaves unrelated URLs untouched', () => {
     const url = 'https://other.example.com/wasm/sdcc.wasm';
-    assert.equal(rewriteLibUrl(url, BASE), url);
+    assert.equal(rewrite(url), url);
+  });
+});
+
+// ── Bundle smoke test ─────────────────────────────────────────────────────────
+suite('Vendor bundle', () => {
+  test('builder-bundle.js loads and exposes retroCompileEngine', async () => {
+    const { readFileSync, existsSync } = await import('node:fs');
+    const bundlePath = new URL('../dist/vendor/builder-bundle.js', import.meta.url).pathname;
+    if (!existsSync(bundlePath)) {
+      console.log('    (skipped — run bundle-vendor-node.mjs first)');
+      return;
+    }
+    const code = readFileSync(bundlePath, 'utf8');
+    globalThis.WebAssembly   = globalThis.WebAssembly || {};
+    globalThis.XMLHttpRequest = class { open(){} send(){} };
+    globalThis.importScripts  = () => {};
+    // Save and restore retroCompileEngine to avoid polluting other tests
+    const prev = globalThis.retroCompileEngine;
+    new Function(code)();
+    const eng = globalThis.retroCompileEngine;
+    assert.ok(eng,                             'retroCompileEngine not registered');
+    assert.equal(typeof eng.store?.reset,      'function', 'store.reset missing');
+    assert.equal(typeof eng.store?.putFile,    'function', 'store.putFile missing');
+    assert.equal(typeof eng.builder?.handleMessage, 'function', 'builder.handleMessage missing');
+    assert.ok(Object.keys(eng.PLATFORM_PARAMS).length > 10, 'PLATFORM_PARAMS empty');
+    assert.equal(typeof eng.configure, 'function', 'configure missing');
+    assert.equal(typeof eng.syncFs,    'function', 'syncFs missing');
+    globalThis.retroCompileEngine = prev;
   });
 });
 
@@ -284,13 +296,12 @@ suite('Public API surface', () => {
   });
 
   test('compile() throws before init()', async () => {
-    api.destroy(); // reset any previous init state
+    api.destroy();
     await assert.rejects(() => api.compile({ platform: 'gb', source: '' }), /init\(\)/);
   });
 
-  test('precompile() is safe to call before init (no-op)', () => {
+  test('precompile() is safe before init (no-op)', () => {
     api.destroy();
-    // Should not throw — just silently ignored
     assert.doesNotThrow(() => api.precompile('gb'));
   });
 });
@@ -300,7 +311,6 @@ for (const { name, fn } of suites) {
   console.log(`\n${name}`);
   await fn();
 }
-
 console.log(`\n${'─'.repeat(50)}`);
 console.log(`${passed + failed} tests: ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

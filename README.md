@@ -1,7 +1,7 @@
 # retro-compile
 
 **In-browser compiler toolchain for retro platforms.**  
-Write C or assembly, get a ROM binary back. No build server needed.
+Write C or assembly, get a ROM binary back. No build server. No Emscripten required.
 
 ```ts
 import { init, compile } from 'retro-compile';
@@ -12,19 +12,15 @@ const result = await compile({
   platform: 'gb',
   source: `
     #include <gb/gb.h>
-    void main() {
-      while(1) {}
-    }
+    void main(void) { while(1) wait_vbl_done(); }
   `,
 });
 
 if (result.ok) {
-  // result.rom is a Uint8Array — load it in any Game Boy emulator
-  emulator.loadROM(result.rom);
+  emulator.loadROM(result.rom); // Uint8Array
 } else {
-  for (const err of result.errors) {
+  for (const err of result.errors)
     console.error(`${err.path}:${err.line} — ${err.message}`);
-  }
 }
 ```
 
@@ -32,61 +28,64 @@ if (result.ok) {
 
 ## How it works
 
-All compilation runs in a **Web Worker** so it never blocks the main thread. Each compiler (SDCC, CC65, CMOC, etc.) is compiled to **WebAssembly** via Emscripten and loaded lazily — you only pay for the toolchain you actually use.
-
-The compilation pipeline mirrors what [8bitworkshop](https://8bitworkshop.com) does internally:
+All compilation runs in a **Web Worker** — never blocks the main thread.  
+Each compiler (SDCC, CC65, CMOC…) is a pre-built **WebAssembly** module loaded lazily, so you only pay for the toolchain you actually use.
 
 ```
 C source
-  ↓ mcpp (preprocessor)
-  ↓ sdcc / cc65 / cmoc  (C → architecture-specific assembly)
-  ↓ sdasz80 / ca65 / lwasm  (assembly → relocatable object)
-  ↓ sdldz80 / ld65 / lwlink (link → Intel HEX or raw binary)
-  ↓ parseIHX / raw copy (→ Uint8Array ROM)
+  → mcpp (preprocessor)
+  → sdcc / cc65 / cmoc  (C → architecture ASM)
+  → sdasz80 / ca65 / lwasm  (ASM → relocatable object)
+  → sdldz80 / ld65 / lwlink  (link → Intel HEX / raw binary)
+  → Uint8Array ROM
 ```
 
 Assembly sources skip the first two steps.
 
 ---
 
-## Installation
+## Setup
+
+### 1 — Get the 8bitworkshop compiled assets
+
+You need the Wasm toolchain binaries and standard-library filesystem packs from
+[8bitworkshop](https://github.com/sehugg/8bitworkshop). If you have a pre-built
+archive (the `.7z` / `.zip` that contains `src/worker/wasm/*.wasm` and
+`src/worker/fs/*.data`) you can use it directly without running `make`.
+
+### 2 — Copy assets into the library
 
 ```bash
-npm install retro-compile
+node scripts/copy-assets.mjs --8bws /path/to/8bitworkshop
 ```
 
-Then host the static assets (Wasm blobs, filesystem packs) somewhere your users
-can reach. They live in `node_modules/retro-compile/dist/assets/`:
+This copies Wasm binaries and FS packs into `dist/assets/`.
 
-```
-dist/
-  index.js          ← ESM library
-  index.cjs         ← CommonJS library  
-  worker.js         ← Compiler Web Worker
-  assets/
-    wasm/
-      sdcc.wasm     ← Z80/Game Boy C compiler
-      sdasz80.wasm  ← Z80 assembler
-      sdasgb.wasm   ← Game Boy assembler
-      sdldz80.wasm  ← Z80 linker
-      mcpp.wasm     ← C preprocessor
-      cc65.wasm     ← 6502 C compiler
-      ca65.wasm     ← 6502 assembler
-      ld65.wasm     ← 6502 linker
-      cmoc.wasm     ← 6809 C compiler
-      ...
-    fs/
-      fssdcc.js           ← SDCC standard library FS
-      fssdcc.js.metadata
-      fssdcc.data
-      fs65-nes.js         ← NES libraries FS
-      fs65-nes.js.metadata
-      fs65-nes.data
-      fs65-c64.js         ← C64 libraries FS
-      ...
+### 3 — Build the vendor engine bundle
+
+No esbuild or npm install required — uses only Node.js built-ins:
+
+```bash
+# First compile the 8bitworkshop worker TypeScript (if not already compiled):
+cd /path/to/8bitworkshop
+tsc -p src/common/tsconfig.json
+tsc -p src/worker/tsconfig.json
+cd -
+
+# Then bundle into an IIFE the worker can fetch at runtime:
+node scripts/bundle-vendor-node.mjs --8bws /path/to/8bitworkshop
 ```
 
-Tell the library where you've hosted them:
+Output: `dist/vendor/builder-bundle.js`
+
+### 4 — Serve and use
+
+```bash
+npm run demo          # npx serve . -p 4321
+# open http://localhost:4321/demo.html
+```
+
+Or host `dist/` on any static server and point `init()` at it:
 
 ```ts
 await init({ baseUrl: 'https://cdn.yoursite.com/retro-compile/' });
@@ -100,12 +99,24 @@ await init({ baseUrl: 'https://cdn.yoursite.com/retro-compile/' });
 
 ```ts
 await init({
-  baseUrl?: string,   // URL prefix for assets. Defaults to same directory as index.js.
-  noWorker?: boolean, // Run on main thread (blocks!). Default: false.
+  baseUrl?: string,   // URL of hosted assets directory. Defaults to same dir as index.js.
+  noWorker?: boolean, // Run on main thread (blocks). Useful in Node.js. Default: false.
 });
 ```
 
-Call once before any `compile()` calls. Safe to call multiple times (idempotent).
+Idempotent — safe to call multiple times.
+
+---
+
+### `precompile(platform)`
+
+```ts
+precompile('gb');  // fire-and-forget, no await needed
+```
+
+Warms up Wasm modules and FS packs for a platform in the background. Call after
+`init()` to eliminate cold-start latency on the first `compile()`. Safe to call
+before `init()` (no-op).
 
 ---
 
@@ -113,15 +124,15 @@ Call once before any `compile()` calls. Safe to call multiple times (idempotent)
 
 ```ts
 const result = await compile({
-  platform: Platform,               // required — see table below
-  source: string,                   // required — source code
-  language?: 'c' | 'asm',          // default: 'c'
-  files?: Record<string, string | Uint8Array>,  // extra headers / data files
-  debug?: boolean,                  // include source mappings in result
+  platform: Platform,                             // required
+  source:   string,                               // required
+  language?: 'c' | 'asm',                        // default 'c'
+  files?:    Record<string, string | Uint8Array>, // extra headers / data files
+  debug?:    boolean,                             // include source mappings
 });
 ```
 
-Returns a `CompileResult`:
+Returns `CompileResult`:
 
 ```ts
 // Success
@@ -131,118 +142,46 @@ Returns a `CompileResult`:
 { ok: false, errors: CompileError[] }
 ```
 
-#### `CompileError`
-
-```ts
-{
-  line: number,         // 1-based line number
-  col?: number,         // 1-based column (when available)
-  path?: string,        // source file (may be a header)
-  message: string,      // human-readable error text
-  severity: 'error' | 'warning',
-}
-```
+`CompileError`: `{ line, col?, path?, message, severity: 'error'|'warning' }`
 
 ---
 
 ### `destroy()`
 
-Terminates the Web Worker. Call when you're done to free resources.
+Terminates the worker. Call when done to free resources.
 
 ---
 
 ## Platforms
 
-| Platform ID      | Name                  | CPU   | C Compiler | Libraries            |
-|------------------|-----------------------|-------|------------|----------------------|
-| `gb`             | Nintendo Game Boy     | SM83  | SDCC       | GBDK (gb.lib)        |
-| `coleco`         | ColecoVision          | Z80   | SDCC       | libcv / libcvu       |
-| `msx`            | MSX                   | Z80   | SDCC       | crt0-msx             |
-| `zx`             | ZX Spectrum           | Z80   | SDCC       | crt0-zx              |
-| `mw8080bw`       | Midway 8080 B&W       | Z80   | SDCC       | —                    |
-| `galaxian`       | Galaxian arcade       | Z80   | SDCC       | —                    |
-| `base_z80`       | Generic Z80           | Z80   | SDCC       | —                    |
-| `nes`            | Nintendo NES          | 6502  | CC65       | neslib2              |
-| `c64`            | Commodore 64          | 6502  | CC65       | c64.lib              |
-| `vcs`            | Atari 2600 VCS        | 6502  | CC65       | atari2600.lib        |
-| `apple2`         | Apple II              | 6502  | CC65       | apple2.lib           |
-| `atari8-800xl`   | Atari 8-bit 800XL     | 6502  | CC65       | atari.lib            |
-| `vectrex`        | GCE Vectrex           | 6809  | CMOC       | libcmoc              |
-| `williams-z80`   | Williams arcade (Z80) | Z80   | SDCC       | —                    |
+| ID               | Name                  | CPU    | C compiler |
+|------------------|-----------------------|--------|------------|
+| `gb`             | Nintendo Game Boy     | SM83   | SDCC       |
+| `coleco`         | ColecoVision          | Z80    | SDCC       |
+| `msx`            | MSX                   | Z80    | SDCC       |
+| `zx`             | ZX Spectrum           | Z80    | SDCC       |
+| `mw8080bw`       | Midway 8080 B&W       | Z80    | SDCC       |
+| `galaxian`       | Galaxian arcade       | Z80    | SDCC       |
+| `base_z80`       | Generic Z80           | Z80    | SDCC       |
+| `williams-z80`   | Williams arcade       | Z80    | SDCC       |
+| `nes`            | Nintendo NES          | 6502   | CC65       |
+| `c64`            | Commodore 64          | 6510   | CC65       |
+| `vcs`            | Atari 2600 VCS        | 6507   | CC65       |
+| `apple2`         | Apple II              | 6502   | CC65       |
+| `atari8-800xl`   | Atari 8-bit 800XL     | 6502   | CC65       |
+| `vectrex`        | GCE Vectrex           | 6809   | CMOC       |
 
 ---
 
-## Examples
+## Scripts reference
 
-### Game Boy — C
-
-```ts
-const result = await compile({
-  platform: 'gb',
-  source: `
-#include <gb/gb.h>
-#include <stdio.h>
-
-void main(void) {
-  printf("Hello, Game Boy!\\n");
-  while(1) wait_vbl_done();
-}
-  `,
-});
-```
-
-### NES — C with header file
-
-```ts
-const result = await compile({
-  platform: 'nes',
-  source: `
-#include "sprites.h"
-void main(void) {
-  setup_sprites();
-  while(1) {}
-}
-  `,
-  files: {
-    'sprites.h': `void setup_sprites(void);`,
-    'sprites.c': `void setup_sprites(void) { /* ... */ }`,
-  },
-});
-```
-
-### Z80 — direct assembly (ColecoVision)
-
-```ts
-const result = await compile({
-  platform: 'coleco',
-  language: 'asm',
-  source: `
-  .area _HOME
-  .area _CODE
-start:
-  ld  hl, #0x8100
-  ld  sp, hl
-  ; ... your code
-  `,
-});
-```
-
-### Source-level debug info
-
-```ts
-const result = await compile({
-  platform: 'gb',
-  source: mySource,
-  debug: true,
-});
-
-if (result.ok) {
-  // Map ROM offsets back to source lines
-  for (const m of result.mappings ?? []) {
-    console.log(`${m.path}:${m.line} → ROM 0x${m.romOffset.toString(16)}`);
-  }
-}
-```
+| Script | What it does |
+|--------|-------------|
+| `tsc` | Type-check + compile TypeScript → `dist/` |
+| `node scripts/bundle-vendor-node.mjs --8bws <path>` | Bundle 8bws builder → `dist/vendor/builder-bundle.js` (no npm needed) |
+| `node scripts/copy-assets.mjs --8bws <path>` | Copy Wasm + FS packs → `dist/assets/` |
+| `npm test` | Run 29-test suite |
+| `npm run demo` | Serve on port 4321 |
 
 ---
 
@@ -250,32 +189,29 @@ if (result.ok) {
 
 ```
 src/
-  index.ts              ← Public API: init(), compile(), destroy()
-  types.ts              ← All public TypeScript types
+  index.ts              init(), compile(), precompile(), destroy()
+  types.ts              All public TypeScript types
   core/
-    bridge.ts           ← WorkerBridge: spawns worker, routes Promises
-    errors.ts           ← Error normalisation (all tool formats → CompileError)
-    protocol.ts         ← Internal worker message types
+    bridge.ts           WorkerBridge — Worker lifetime + Promise routing
+    errors.ts           Error normalisation (SDCC/CA65/SDAS/SDLD/mcpp → CompileError)
+    in-thread.ts        noWorker / Node.js in-thread path
+    protocol.ts         Typed Worker ↔ main thread message protocol
   platforms/
-    profiles.ts         ← PlatformProfile registry (replaces PLATFORM_PARAMS)
+    profiles.ts         PlatformProfile registry (14 platforms)
   worker/
-    worker.ts           ← Compiler Web Worker entry point
+    worker.ts           Compiler Web Worker entry point
+    engine-adapter.ts   Shim: wraps 8bws internals as retroCompileEngine
+scripts/
+  bundle-vendor-node.mjs  Pure Node.js bundler (no esbuild needed)
+  copy-assets.mjs         Copies Wasm + FS packs from 8bws source tree
 ```
-
-The **worker** is the only part that imports 8bitworkshop internals. Everything
-above it talks in clean, typed messages. This means you can swap the underlying
-build engine without changing the public API.
 
 ---
 
 ## Credits
 
-Compilation is powered by the open-source toolchain inside
-[8bitworkshop](https://github.com/sehugg/8bitworkshop) by Steven E. Hugg,
-which bundles SDCC, CC65, CMOC, SDAS, CA65, LD65, MCPP, and others as
-Emscripten WebAssembly modules.
-
----
+Powered by [8bitworkshop](https://github.com/sehugg/8bitworkshop) by Steven E. Hugg
+(SDCC, CC65, CMOC, and all their toolchain friends, compiled to WebAssembly).
 
 ## License
 

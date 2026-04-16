@@ -53,22 +53,15 @@ export class WorkerBridge {
     // ── Public API ──────────────────────────────────────────────────────────
     /**
      * Warm up the compiler for a platform by preloading its Wasm modules
-     * and filesystem packs. Call this after init() and before the user
-     * triggers their first compile to eliminate cold-start latency.
-     *
-     * Safe to call multiple times — cached after first load.
+     * and filesystem packs in the background. Fire-and-forget.
      */
-    async precompile(platform) {
-        await this.ready;
+    precompile(platform) {
         const msg = {
             type: 'preload',
-            fs: platform, // the worker resolves the FS name from the platform
+            fs: platform,
             baseUrl: this.baseUrl,
         };
         this.worker.postMessage(msg);
-        // preload is fire-and-forget from the bridge's perspective —
-        // the worker handles it asynchronously and the next compile() will
-        // simply find the modules already cached.
     }
     /**
      * Compile source code for a retro platform.

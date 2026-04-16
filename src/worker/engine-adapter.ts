@@ -1,140 +1,88 @@
 /**
  * src/worker/engine-adapter.ts
  *
- * Wraps 8bitworkshop's builder, store, and PLATFORM_PARAMS in the clean
- * interface that worker.ts expects as `retroCompileEngine`.
+ * Entry point for bundle-vendor-node.mjs (and the optional build-vendor.mjs
+ * if esbuild is available). Gets bundled into dist/vendor/builder-bundle.js.
  *
- * This file is the entry point for build-vendor.mjs. esbuild bundles it
- * (and everything it imports from 8bitworkshop) into an IIFE that runs
- * inside the compiler Web Worker and registers on globalThis.
+ * Imports the three pieces we need from 8bitworkshop and registers them as
+ * globalThis.retroCompileEngine — the interface worker.ts expects.
  *
- * The vendor bundle path:
- *   engine-adapter.ts  →  esbuild (IIFE)  →  dist/vendor/builder-bundle.js
+ * When bundled as an IIFE by bundle-vendor-node.mjs the @ts-ignore import
+ * paths are resolved by the bundler's module-id system; when bundled by
+ * esbuild they are resolved via path aliases in build-vendor.mjs.
  *
- * The worker fetches builder-bundle.js and runs it with new Function(code)().
- * After that, globalThis.retroCompileEngine is the object below.
+ * This file is NOT part of the main library bundle — it only exists inside
+ * the vendor bundle that the compiler Web Worker fetches at runtime.
  */
 
-// ─── 8bitworkshop imports ────────────────────────────────────────────────────
-// These are resolved by esbuild at bundle time using the --8bws path.
-// They are NOT bundled into the main library — only into builder-bundle.js.
-//
-// The import paths here use path aliases that build-vendor.mjs rewrites
-// before bundling (replacing '8bws/' with the actual 8bitworkshop root).
-
-// @ts-ignore — resolved by build-vendor.mjs
+// @ts-ignore — resolved at bundle time
 import { store, builder } from '8bws/src/worker/builder';
 // @ts-ignore
 import { PLATFORM_PARAMS } from '8bws/src/worker/platforms';
-// @ts-ignore — side-effect: populates TOOLS registry
+// @ts-ignore — side-effect: populates TOOLS registry used by builder
 import '8bws/src/worker/workertools';
-// @ts-ignore — side-effect: provides emglobal shims
-import { emglobal, loadFilesystem, fsMeta } from '8bws/src/worker/wasmutils';
+// @ts-ignore — provides emglobal, fsMeta used by syncFs
+import { emglobal, fsMeta } from '8bws/src/worker/wasmutils';
 
-// ─── XHR interception ────────────────────────────────────────────────────────
-// 8bitworkshop's populateExtraFiles() fetches platform library files
-// (crt0.rel, neslib2.lib, etc.) via synchronous XHR from a relative path:
-//   xhr.open("GET", "../../src/worker/lib/<platform>/<file>", false)
-//
-// Inside a Web Worker there is no concept of "relative to the HTML page",
-// so we intercept XMLHttpRequest and rewrite those URLs to use our baseUrl.
+// ── XHR interceptor ──────────────────────────────────────────────────────────
+// 8bitworkshop's populateExtraFiles() fetches platform lib files (crt0.rel,
+// neslib2.lib, etc.) via synchronous XHR with paths relative to the worker.
+// We intercept and rewrite those paths to point at our hosted assets.
 
 let _libBaseUrl = './assets/lib/';
 
-function installXhrInterceptor(libBaseUrl: string) {
-  _libBaseUrl = libBaseUrl;
-
-  // The Emscripten modules in 8bws use the global XMLHttpRequest.
-  // We replace it with a thin wrapper that rewrites lib/ paths.
+function installXhrInterceptor(libBase: string) {
+  _libBaseUrl = libBase;
   const OrigXHR = (globalThis as any).XMLHttpRequest;
-  if (!OrigXHR || (OrigXHR as any).__rc_patched) return;
+  if (!OrigXHR || OrigXHR.__rc_patched) return;
 
   function PatchedXHR(this: any) {
     const inner = new OrigXHR();
-    // Proxy all properties and methods
-    const handler: ProxyHandler<any> = {
-      get(_, prop) {
+    return new Proxy(inner, {
+      get(_: unknown, prop: string) {
         if (prop === 'open') {
-          return function (method: string, url: string, async?: boolean) {
-            const rewritten = rewriteLibUrl(url);
-            return inner.open.call(inner, method, rewritten, async);
+          return (method: string, url: string, async?: boolean) => {
+            const m = url.match(/(?:src\/worker\/)?lib\/(.+)$/);
+            if (m) url = _libBaseUrl + m[1];
+            return inner.open.call(inner, method, url, async);
           };
         }
-        const val = inner[prop];
-        return typeof val === 'function' ? val.bind(inner) : val;
+        const v = inner[prop];
+        return typeof v === 'function' ? v.bind(inner) : v;
       },
-      set(_, prop, value) {
-        inner[prop] = value;
+      set(_: unknown, prop: string, val: unknown) {
+        inner[prop] = val;
         return true;
       },
-    };
-    return new Proxy(inner, handler);
+    });
   }
-  PatchedXHR.__rc_patched = true;
+  (PatchedXHR as any).__rc_patched = true;
   (globalThis as any).XMLHttpRequest = PatchedXHR;
 }
 
-/**
- * Rewrite an 8bitworkshop-internal lib URL to point at our hosted assets.
- * Input:  "../../src/worker/lib/coleco/crt0.rel"
- * Output: "<libBaseUrl>/coleco/crt0.rel"
- */
-function rewriteLibUrl(url: string): string {
-  // Match paths that reference the 8bitworkshop lib directory
-  const m = url.match(/(?:src\/worker\/)?lib\/(.+)$/);
-  if (m) return _libBaseUrl + m[1];
-  return url;
-}
+// ── Public engine interface ───────────────────────────────────────────────────
 
-// ─── Filesystem loader bridge ─────────────────────────────────────────────────
-// 8bitworkshop's loadFilesystem() uses synchronous XHR. We've already
-// preloaded the FS data in worker.ts using async fetch, and stored the
-// results in globalThis.fsMeta / globalThis.fsBlob. The emglobal shim
-// reads from there, so no extra work is needed here — but we do need to
-// ensure the fsMeta entries are visible to setupFS() calls.
-
-function syncFsMeta(meta: Record<string, unknown>, blob: Record<string, unknown>) {
-  // emglobal is the same object as globalThis inside a Worker
-  for (const [k, v] of Object.entries(meta)) {
-    (fsMeta as Record<string, unknown>)[k] = v;
-  }
-  // fsBlob is read by WORKERFS mount; it lives on emglobal too
-  const fsBlob = (emglobal as Record<string, unknown>)['fsBlob'] as Record<string, unknown> ?? {};
-  for (const [k, v] of Object.entries(blob)) {
-    fsBlob[k] = v;
-  }
-  (emglobal as Record<string, unknown>)['fsBlob'] = fsBlob;
-}
-
-// ─── Public engine interface ──────────────────────────────────────────────────
-
-export interface RetroCompileEngine {
-  store: typeof store;
-  builder: typeof builder;
-  PLATFORM_PARAMS: typeof PLATFORM_PARAMS;
-  configure(opts: EngineConfig): void;
-  syncFs(meta: Record<string, unknown>, blob: Record<string, unknown>): void;
-}
-
-export interface EngineConfig {
-  /** Base URL for assets, used to rewrite lib/ XHR requests. */
-  baseUrl: string;
-}
-
-const engine: RetroCompileEngine = {
+const engine = {
   store,
   builder,
   PLATFORM_PARAMS,
 
-  configure({ baseUrl }: EngineConfig) {
-    const libUrl = baseUrl.endsWith('/') ? baseUrl + 'lib/' : baseUrl + '/lib/';
-    installXhrInterceptor(libUrl);
+  configure(opts: { baseUrl: string }) {
+    const base = opts.baseUrl.endsWith('/') ? opts.baseUrl : opts.baseUrl + '/';
+    installXhrInterceptor(base + 'lib/');
   },
 
-  syncFs(meta, blob) {
-    syncFsMeta(meta, blob);
+  syncFs(meta: Record<string, unknown>, blob: Record<string, unknown>) {
+    // Push preloaded FS metadata into the scope that setupFS() reads from
+    Object.assign(fsMeta as Record<string, unknown>, meta);
+    const g = globalThis as Record<string, unknown>;
+    g['fsBlob'] = g['fsBlob'] ?? {};
+    Object.assign(g['fsBlob'] as Record<string, unknown>, blob);
+    // Also push into emglobal in case it differs from globalThis
+    if (emglobal !== globalThis) {
+      Object.assign((emglobal as Record<string, unknown>)['fsMeta'] ?? {}, meta);
+    }
   },
 };
 
-// Register on globalThis so worker.ts can find it after new Function(code)()
 (globalThis as any).retroCompileEngine = engine;

@@ -114,6 +114,12 @@ export interface PlatformProfile {
 
   /** Trigger Game Boy header checksum patching after link. */
   gbChecksumPatch?: boolean;
+
+  /**
+   * If true, this platform cannot be compiled with the current asset set.
+   * compile() will return an error immediately rather than failing mid-build.
+   */
+  unavailable?: string; // human-readable reason
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +300,7 @@ export const PLATFORM_PROFILES: Record<Platform, PlatformProfile> = {
     cCompiler: 'cc65',
     asmAssembler: 'ca65',
     linker: 'ld65',
-    filesystems: ['65-atari2600'],
+    filesystems: ['65-sim6502'],  // archive ships sim6502 instead of atari2600
     code_start: 0x1000,
     data_start: 0x80,
     data_size: 0x80,

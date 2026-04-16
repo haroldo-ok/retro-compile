@@ -18,12 +18,9 @@ export declare class WorkerBridge {
     static create(workerUrl: string, baseUrl: string): WorkerBridge;
     /**
      * Warm up the compiler for a platform by preloading its Wasm modules
-     * and filesystem packs. Call this after init() and before the user
-     * triggers their first compile to eliminate cold-start latency.
-     *
-     * Safe to call multiple times — cached after first load.
+     * and filesystem packs in the background. Fire-and-forget.
      */
-    precompile(platform: import('../types.js').Platform): Promise<void>;
+    precompile(platform: import('../types.js').Platform): void;
     /**
      * Compile source code for a retro platform.
      * Returns a Promise that resolves once the worker finishes.
