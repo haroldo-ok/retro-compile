@@ -47,7 +47,7 @@ export async function init(opts: InitOptions = {}): Promise<void> {
   if (_initiated) return;
   _initiated = true;
 
-  _baseUrl  = opts.baseUrl  ?? detectBaseUrl();
+  _baseUrl  = resolveBaseUrl(opts.baseUrl  ?? detectBaseUrl());
   _noWorker = opts.noWorker ?? false;
 
   if (_noWorker) {
@@ -149,5 +149,28 @@ function detectBaseUrl(): string {
     return new URL('./', import.meta.url).href;
   } catch {
     return './';
+  }
+}
+
+/**
+ * Resolve a potentially-relative baseUrl to an absolute URL so the worker
+ * (which has a different base URL than the page) can fetch assets correctly.
+ * Uses location.href as the anchor when available (browser main thread),
+ * otherwise falls back to the URL as-is.
+ */
+function resolveBaseUrl(baseUrl: string): string {
+  if (baseUrl.startsWith('http://') || baseUrl.startsWith('https://')) {
+    return baseUrl; // already absolute
+  }
+  try {
+    // In a browser context, resolve relative to the page URL
+    return new URL(baseUrl, location.href).href;
+  } catch {
+    try {
+      // ESM: resolve relative to this module
+      return new URL(baseUrl, import.meta.url).href;
+    } catch {
+      return baseUrl;
+    }
   }
 }

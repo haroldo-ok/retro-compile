@@ -764,7 +764,7 @@ try {
 
   log('Calling init()…', 'inf');
   await compileLib.init({
-    baseUrl: './dist/assets/',
+    baseUrl: location.origin + '/dist/assets/',
   });
 
   log('✓ Ready', 'ok');
