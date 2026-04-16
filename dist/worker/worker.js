@@ -6,6 +6,7 @@ import { PLATFORM_PROFILES } from '../platforms/profiles.js';
 // Global state
 // ---------------------------------------------------------------------------
 let _baseUrl = './';
+let _vendorUrl = './vendor/';
 const _loadedScripts = new Set();
 const _wasmBinaries = {};
 const _fsMeta = {};
@@ -98,9 +99,10 @@ let _engine = null;
 async function getEngine() {
     if (_engine)
         return _engine;
-    const res = await fetch(`${_baseUrl}vendor/builder-bundle.js`);
+    const bundleUrl = `${_vendorUrl}builder-bundle.js`;
+    const res = await fetch(bundleUrl);
     if (!res.ok)
-        throw new Error(`retro-compile: cannot load engine (${res.status})`);
+        throw new Error(`retro-compile: cannot load engine from ${bundleUrl} (${res.status})`);
     // eslint-disable-next-line no-new-func
     new Function(await res.text())();
     const eng = globalThis['retroCompileEngine'];
@@ -229,16 +231,22 @@ self.addEventListener('message', async (evt) => {
         return;
     if (msg.type === 'preload') {
         _baseUrl = msg.baseUrl;
-        try {
-            await preloadFilesystem(msg.fs);
-        }
-        catch (e) {
-            console.warn('[retro-compile] preload failed:', e);
+        _vendorUrl = msg.vendorUrl;
+        const profile = PLATFORM_PROFILES[msg.fs];
+        const fsNames = profile ? profile.filesystems : [msg.fs];
+        for (const name of fsNames) {
+            try {
+                await preloadFilesystem(name);
+            }
+            catch (e) {
+                console.warn(`[retro-compile] preload '${name}' failed:`, e);
+            }
         }
         return;
     }
     if (msg.type === 'compile') {
         _baseUrl = msg.baseUrl;
+        _vendorUrl = msg.vendorUrl;
         let out;
         try {
             out = await runBuild(msg);
