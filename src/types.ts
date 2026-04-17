@@ -8,7 +8,6 @@
 /** Every platform the library supports. */
 export type Platform =
   // Z80 family
-  | 'gb'               // Nintendo Game Boy (SDCC → sdasgb → sdldz80)
   | 'coleco'           // ColecoVision      (SDCC → sdasz80 → sdldz80)
   | 'msx'              // MSX               (SDCC → sdasz80 → sdldz80)
   | 'zx'               // ZX Spectrum       (SDCC → sdasz80 → sdldz80)
@@ -38,9 +37,9 @@ export type Language = 'c' | 'asm';
  * @example
  * ```ts
  * const result = await compile({
- *   platform: 'gb',
+ *   platform: 'coleco',
  *   language: 'c',
- *   source: myGBSource,
+ *   source: mySource,
  * });
  * ```
  */

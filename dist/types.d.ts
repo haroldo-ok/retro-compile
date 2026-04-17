@@ -1,5 +1,5 @@
 /** Every platform the library supports. */
-export type Platform = 'gb' | 'coleco' | 'msx' | 'zx' | 'mw8080bw' | 'galaxian' | 'base_z80' | 'nes' | 'c64' | 'vcs' | 'apple2' | 'atari8-800xl' | 'vectrex' | 'williams-z80';
+export type Platform = 'coleco' | 'msx' | 'zx' | 'mw8080bw' | 'galaxian' | 'base_z80' | 'nes' | 'c64' | 'vcs' | 'apple2' | 'atari8-800xl' | 'vectrex' | 'williams-z80';
 /** Source language for the input file. */
 export type Language = 'c' | 'asm';
 /**
@@ -8,9 +8,9 @@ export type Language = 'c' | 'asm';
  * @example
  * ```ts
  * const result = await compile({
- *   platform: 'gb',
+ *   platform: 'coleco',
  *   language: 'c',
- *   source: myGBSource,
+ *   source: mySource,
  * });
  * ```
  */

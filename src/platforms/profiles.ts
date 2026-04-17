@@ -20,14 +20,12 @@ export type CompilerTool =
   | 'cc65'        // C → 6502 asm (via CC65)
   | 'cmoc'        // C → 6809 asm (via CMOC)
   | 'sdasz80'     // Z80 ASM direct
-  | 'sdasgb'      // Game Boy ASM direct
   | 'ca65'        // 6502 ASM direct
   | 'xasm6809';   // 6809 ASM direct
 
 /** Supported assembler tool IDs. */
 export type AssemblerTool =
   | 'sdasz80'
-  | 'sdasgb'
   | 'ca65'
   | 'lwasm'
   | 'xasm6809';
@@ -39,7 +37,7 @@ export type LinkerTool =
   | 'lwlink';
 
 /** CPU architecture shorthand — used for linker flags and fs selection. */
-export type Arch = 'z80' | 'gbz80' | '6502' | '6809' | 'arm32';
+export type Arch = 'z80' | '6502' | '6809' | 'arm32';
 
 /**
  * Full description of how to build for one platform.
@@ -83,7 +81,6 @@ export interface PlatformProfile {
   /** Top of stack. */
   stack_end?: number;
   /** For 6502: start address of the _CODE segment (cc65-specific). */
-  codeseg_start?: number;
 
   // ── Linker extras ─────────────────────────────────────────────────────────
 
@@ -110,11 +107,6 @@ export interface PlatformProfile {
   /** ld65 library args — object files and libs in link order. */
   libargs?: string[];
 
-  // ── Game Boy specifics ────────────────────────────────────────────────────
-
-  /** Trigger Game Boy header checksum patching after link. */
-  gbChecksumPatch?: boolean;
-
   /**
    * If true, this platform cannot be compiled with the current asset set.
    * compile() will return an error immediately rather than failing mid-build.
@@ -128,30 +120,6 @@ export interface PlatformProfile {
 
 export const PLATFORM_PROFILES: Record<Platform, PlatformProfile> = {
 
-  // ── Game Boy ──────────────────────────────────────────────────────────────
-  gb: {
-    name: 'Nintendo Game Boy',
-    arch: 'gbz80',
-    cCompiler: 'sdcc',
-    asmAssembler: 'sdasgb',
-    linker: 'sdldz80',
-    filesystems: ['sdcc'],
-    rom_start: 0x0,
-    code_start: 0x0,
-    codeseg_start: 0x200,
-    rom_size: 0x8000,
-    data_start: 0xc0a0,
-    data_size: 0x1f60,
-    stack_end: 0xe000,
-    gbChecksumPatch: true,
-    extra_link_files: ['gbz80.lib', 'gb.lib'],
-    extra_link_args: [
-      '-l', 'gb',
-      '-g', '_shadow_OAM=0xC000',
-      '-g', '.STACK=0xE000',
-      '-g', '.refresh_OAM=0xFF80',
-    ],
-  },
 
   // ── ColecoVision ──────────────────────────────────────────────────────────
   coleco: {

@@ -17,30 +17,6 @@
 // Profile registry
 // ---------------------------------------------------------------------------
 const PLATFORM_PROFILES = {
-    // ── Game Boy ──────────────────────────────────────────────────────────────
-    gb: {
-        name: 'Nintendo Game Boy',
-        arch: 'gbz80',
-        cCompiler: 'sdcc',
-        asmAssembler: 'sdasgb',
-        linker: 'sdldz80',
-        filesystems: ['sdcc'],
-        rom_start: 0x0,
-        code_start: 0x0,
-        codeseg_start: 0x200,
-        rom_size: 0x8000,
-        data_start: 0xc0a0,
-        data_size: 0x1f60,
-        stack_end: 0xe000,
-        gbChecksumPatch: true,
-        extra_link_files: ['gbz80.lib', 'gb.lib'],
-        extra_link_args: [
-            '-l', 'gb',
-            '-g', '_shadow_OAM=0xC000',
-            '-g', '.STACK=0xE000',
-            '-g', '.refresh_OAM=0xFF80',
-        ],
-    },
     // ── ColecoVision ──────────────────────────────────────────────────────────
     coleco: {
         name: 'ColecoVision',
@@ -411,7 +387,7 @@ function firstTool(profile, language) {
 }
 function profileToParams(p) {
     return {
-        arch: p.arch, code_start: p.code_start, codeseg_start: p.codeseg_start,
+        arch: p.arch, code_start: p.code_start,
         rom_start: p.rom_start, rom_size: p.rom_size,
         data_start: p.data_start, data_size: p.data_size, stack_end: p.stack_end,
         extra_link_files: p.extra_link_files, extra_link_args: p.extra_link_args,
@@ -491,13 +467,6 @@ async function runBuild(msg) {
             }
         }
         let rom = result['output'];
-        if (profile.gbChecksumPatch) {
-            rom = new Uint8Array(rom);
-            let cs = 0;
-            for (let a = 0x0134; a <= 0x014c; a++)
-                cs = cs - rom[a] - 1;
-            rom[0x014d] = cs & 0xff;
-        }
         return { type: 'result', id: msg.id, ok: true, rom, symbols, segments, mappings };
     }
     return { type: 'result', id: msg.id, ok: false,

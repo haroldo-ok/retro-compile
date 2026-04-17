@@ -1,12 +1,12 @@
 import type { Platform } from '../types.js';
 /** Supported compiler tool IDs — match 8bitworkshop's TOOLS registry keys. */
-export type CompilerTool = 'sdcc' | 'cc65' | 'cmoc' | 'sdasz80' | 'sdasgb' | 'ca65' | 'xasm6809';
+export type CompilerTool = 'sdcc' | 'cc65' | 'cmoc' | 'sdasz80' | 'ca65' | 'xasm6809';
 /** Supported assembler tool IDs. */
-export type AssemblerTool = 'sdasz80' | 'sdasgb' | 'ca65' | 'lwasm' | 'xasm6809';
+export type AssemblerTool = 'sdasz80' | 'ca65' | 'lwasm' | 'xasm6809';
 /** Supported linker tool IDs. */
 export type LinkerTool = 'sdldz80' | 'ld65' | 'lwlink';
 /** CPU architecture shorthand — used for linker flags and fs selection. */
-export type Arch = 'z80' | 'gbz80' | '6502' | '6809' | 'arm32';
+export type Arch = 'z80' | '6502' | '6809' | 'arm32';
 /**
  * Full description of how to build for one platform.
  * Internal — not exported in the public API surface.
@@ -43,7 +43,6 @@ export interface PlatformProfile {
     /** Top of stack. */
     stack_end?: number;
     /** For 6502: start address of the _CODE segment (cc65-specific). */
-    codeseg_start?: number;
     /** Extra .rel / .o / .a / .lib files to inject before linking. */
     extra_link_files?: string[];
     /** Extra flags forwarded to the linker after the standard set. */
@@ -60,8 +59,6 @@ export interface PlatformProfile {
     cfgfile?: string;
     /** ld65 library args — object files and libs in link order. */
     libargs?: string[];
-    /** Trigger Game Boy header checksum patching after link. */
-    gbChecksumPatch?: boolean;
     /**
      * If true, this platform cannot be compiled with the current asset set.
      * compile() will return an error immediately rather than failing mid-build.

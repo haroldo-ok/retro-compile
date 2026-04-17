@@ -65,7 +65,7 @@ async function ensureFilesystem(name) {
 // ---------------------------------------------------------------------------
 function profileToParams(p) {
     return {
-        arch: p.arch, code_start: p.code_start, codeseg_start: p.codeseg_start,
+        arch: p.arch, code_start: p.code_start,
         rom_start: p.rom_start, rom_size: p.rom_size,
         data_start: p.data_start, data_size: p.data_size, stack_end: p.stack_end,
         extra_link_files: p.extra_link_files, extra_link_args: p.extra_link_args,
@@ -122,13 +122,6 @@ export async function compileInThread(opts) {
             type: (s['type'] === 'rom' || s['type'] === 'ram') ? s['type'] : null,
         }));
         let rom = result['output'];
-        if (profile.gbChecksumPatch) {
-            rom = new Uint8Array(rom);
-            let cs = 0;
-            for (let a = 0x0134; a <= 0x014c; a++)
-                cs = cs - rom[a] - 1;
-            rom[0x014d] = cs & 0xff;
-        }
         return { ok: true, rom, symbols, segments };
     }
     return { ok: false, errors: [{ line: 0, message: 'Unrecognised build result', severity: 'error' }] };
