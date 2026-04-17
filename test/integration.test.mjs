@@ -22,10 +22,10 @@ const { normaliseErrors, makeMsvcMatcher, makeSdasMatcher, makeSdldMatcher, make
 
 // ── Platform profiles ─────────────────────────────────────────────────────────
 suite('Platform profiles', () => {
-  const ALL = ['gb','coleco','msx','zx','mw8080bw','galaxian','base_z80',
+  const ALL = ['coleco','msx','zx','mw8080bw','galaxian','base_z80',
                'nes','c64','vcs','apple2','atari8-800xl','vectrex','williams-z80'];
 
-  test('All 14 platforms have complete profiles', () => {
+  test('All 13 platforms have complete profiles', () => {
     for (const p of ALL) {
       const prof = PLATFORM_PROFILES[p];
       assert.ok(prof,              `Missing profile for '${p}'`);
@@ -44,14 +44,6 @@ suite('Platform profiles', () => {
       assert.equal(prof.cCompiler, 'sdcc',    `${p}: expected sdcc`);
       assert.equal(prof.linker,    'sdldz80', `${p}: expected sdldz80`);
     }
-  });
-
-  test('Game Boy uses gbz80 arch + sdasgb + checksum patch', () => {
-    const gb = getProfile('gb');
-    assert.equal(gb.arch, 'gbz80');
-    assert.equal(gb.asmAssembler, 'sdasgb');
-    assert.equal(gb.gbChecksumPatch, true);
-    assert.equal(gb.codeseg_start, 0x200);
   });
 
   test('6502 platforms use cc65 / ca65 / ld65', () => {
@@ -170,22 +162,13 @@ suite('Error normalisation', () => {
 suite('Profile → params mapping', () => {
   function profileToParams(p) {
     return {
-      arch: p.arch, code_start: p.code_start, codeseg_start: p.codeseg_start,
+      arch: p.arch, code_start: p.code_start,
       rom_start: p.rom_start, rom_size: p.rom_size,
       data_start: p.data_start, data_size: p.data_size, stack_end: p.stack_end,
       extra_link_files: p.extra_link_files, extra_link_args: p.extra_link_args,
       define: p.defines, cfgfile: p.cfgfile, libargs: p.libargs,
     };
   }
-
-  test('Game Boy params — correct memory layout', () => {
-    const p = profileToParams(getProfile('gb'));
-    assert.equal(p.arch, 'gbz80');
-    assert.equal(p.code_start, 0x0);
-    assert.equal(p.codeseg_start, 0x200);
-    assert.equal(p.rom_size, 0x8000);
-    assert.equal(p.data_start, 0xc0a0);
-  });
 
   test('ColecoVision params — ROM at 0x8000', () => {
     const p = profileToParams(getProfile('coleco'));
@@ -197,41 +180,6 @@ suite('Profile → params mapping', () => {
     const p = profileToParams(getProfile('nes'));
     assert.equal(p.cfgfile, 'neslib2.cfg');
     assert.ok(p.define?.includes('__NES__'));
-  });
-});
-
-// ── Game Boy checksum ─────────────────────────────────────────────────────────
-suite('Game Boy checksum patch', () => {
-  function patch(rom) {
-    rom = new Uint8Array(rom);
-    let cs = 0;
-    for (let a = 0x0134; a <= 0x014c; a++) cs = cs - rom[a] - 1;
-    rom[0x014d] = cs & 0xff;
-    return rom;
-  }
-  // GB boot ROM check: x=0; for a in 0x134..0x14D: x=x-mem[a]-1; x&0xFF must be 0xFF
-  function verify(rom) {
-    let x = 0;
-    for (let a = 0x0134; a <= 0x014d; a++) x = x - rom[a] - 1;
-    return x & 0xff;
-  }
-
-  test('Patched ROM passes checksum verification', () => {
-    assert.equal(verify(patch(new Uint8Array(0x8000))), 0xff);
-  });
-
-  test('All-zero header gets checksum 0xE7', () => {
-    const rom = patch(new Uint8Array(0x8000));
-    assert.equal(rom[0x014d], 0xe7);
-    assert.equal(verify(rom), 0xff);
-  });
-
-  test('Non-zero header bytes produce different but valid checksum', () => {
-    const buf = new Uint8Array(0x8000);
-    buf[0x0134] = 0x47; buf[0x0135] = 0x42;
-    const rom = patch(buf);
-    assert.notEqual(rom[0x014d], 0xe7);
-    assert.equal(verify(rom), 0xff);
   });
 });
 
@@ -250,7 +198,7 @@ suite('Lib URL rewriting', () => {
     assert.equal(rewrite('lib/nes/crt0.o'), BASE + 'nes/crt0.o');
   });
   test('Rewrites nested paths', () => {
-    assert.equal(rewrite('src/worker/lib/gb/gbz80.lib'), BASE + 'gb/gbz80.lib');
+    assert.equal(rewrite('src/worker/lib/nes/crt0.o'), BASE + 'nes/crt0.o');
   });
   test('Leaves unrelated URLs untouched', () => {
     const url = 'https://other.example.com/wasm/sdcc.wasm';
@@ -297,12 +245,12 @@ suite('Public API surface', () => {
 
   test('compile() throws before init()', async () => {
     api.destroy();
-    await assert.rejects(() => api.compile({ platform: 'gb', source: '' }), /init\(\)/);
+    await assert.rejects(() => api.compile({ platform: 'coleco', source: '' }), /init\(\)/);
   });
 
   test('precompile() is safe before init (no-op)', () => {
     api.destroy();
-    assert.doesNotThrow(() => api.precompile('gb'));
+    assert.doesNotThrow(() => api.precompile('coleco'));
   });
 });
 

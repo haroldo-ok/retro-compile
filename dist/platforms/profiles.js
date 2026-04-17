@@ -11,30 +11,6 @@
 // Profile registry
 // ---------------------------------------------------------------------------
 export const PLATFORM_PROFILES = {
-    // ── Game Boy ──────────────────────────────────────────────────────────────
-    gb: {
-        name: 'Nintendo Game Boy',
-        arch: 'gbz80',
-        cCompiler: 'sdcc',
-        asmAssembler: 'sdasgb',
-        linker: 'sdldz80',
-        filesystems: ['sdcc'],
-        rom_start: 0x0,
-        code_start: 0x0,
-        codeseg_start: 0x200,
-        rom_size: 0x8000,
-        data_start: 0xc0a0,
-        data_size: 0x1f60,
-        stack_end: 0xe000,
-        gbChecksumPatch: true,
-        extra_link_files: ['gbz80.lib', 'gb.lib'],
-        extra_link_args: [
-            '-l', 'gb',
-            '-g', '_shadow_OAM=0xC000',
-            '-g', '.STACK=0xE000',
-            '-g', '.refresh_OAM=0xFF80',
-        ],
-    },
     // ── ColecoVision ──────────────────────────────────────────────────────────
     coleco: {
         name: 'ColecoVision',

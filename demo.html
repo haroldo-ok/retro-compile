@@ -340,30 +340,6 @@
 
 const PLATFORMS = [
   {
-    id: 'gb', name: 'Game Boy', cpu: 'SM83 / gbz80', icon: '🎮',
-    c: `// Nintendo Game Boy — C via SDCC + GBDK
-#include <gb/gb.h>
-
-void main(void) {
-  // Infinite loop — your game logic goes here
-  while(1) {
-    wait_vbl_done();
-  }
-}`,
-    asm: `; Game Boy Z80 assembly (SDAS syntax)
-  .area _HOME
-  .area _CODE
-
-start::
-  ; Disable interrupts
-  di
-  ; Infinite loop
-loop:
-  halt
-  nop
-  jr loop`,
-  },
-  {
     id: 'coleco', name: 'ColecoVision', cpu: 'Z80', icon: '🕹️',
     c: `// ColecoVision — C via SDCC + libcv 0.23
 #include <cv.h>
