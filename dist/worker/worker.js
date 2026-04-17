@@ -94,6 +94,9 @@ async function preloadFilesystem(name) {
         throw new Error(`retro-compile: FS data not found for '${name}'`);
     _fsMeta[name] = await metaRes.json();
     _fsBlob[name] = await dataRes.blob();
+    // Push into engine if already loaded (compile called after precompile)
+    _engine?.configure?.({ baseUrl: _baseUrl });
+    _engine?.syncFs?.(_fsMeta, _fsBlob);
 }
 let _engine = null;
 async function getEngine() {
@@ -108,6 +111,11 @@ async function getEngine() {
     const eng = globalThis['retroCompileEngine'];
     if (!eng)
         throw new Error('retro-compile: engine bundle did not register retroCompileEngine');
+    // Configure PWORKER base URL and install the importScripts/XHR shims
+    eng.configure?.({ baseUrl: _baseUrl });
+    // Sync any filesystems already preloaded before the engine loaded
+    if (Object.keys(_fsMeta).length)
+        eng.syncFs?.(_fsMeta, _fsBlob);
     _engine = eng;
     return eng;
 }

@@ -106,6 +106,9 @@ async function preloadFilesystem(name: string): Promise<void> {
   if (!dataRes.ok) throw new Error(`retro-compile: FS data not found for '${name}'`);
   _fsMeta[name] = await metaRes.json();
   _fsBlob[name]  = await dataRes.blob();
+  // Push into engine if already loaded (compile called after precompile)
+  _engine?.configure?.({ baseUrl: _baseUrl });
+  _engine?.syncFs?.(_fsMeta, _fsBlob);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +128,8 @@ interface BuildEngine {
   store: StoreAPI;
   builder: BuilderAPI;
   PLATFORM_PARAMS: Record<string, unknown>;
+  configure?(opts: { baseUrl: string }): void;
+  syncFs?(meta: Record<string, unknown>, blob: Record<string, unknown>): void;
 }
 
 let _engine: BuildEngine | null = null;
@@ -139,6 +144,12 @@ async function getEngine(): Promise<BuildEngine> {
   new Function(await res.text())();
   const eng = (globalThis as Record<string, unknown>)['retroCompileEngine'] as BuildEngine | undefined;
   if (!eng) throw new Error('retro-compile: engine bundle did not register retroCompileEngine');
+
+  // Configure PWORKER base URL and install the importScripts/XHR shims
+  eng.configure?.({ baseUrl: _baseUrl });
+  // Sync any filesystems already preloaded before the engine loaded
+  if (Object.keys(_fsMeta).length) eng.syncFs?.(_fsMeta, _fsBlob);
+
   _engine = eng;
   return eng;
 }
