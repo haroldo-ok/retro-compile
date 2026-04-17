@@ -365,12 +365,22 @@ loop:
   },
   {
     id: 'coleco', name: 'ColecoVision', cpu: 'Z80', icon: '🕹️',
-    c: `// ColecoVision — C via SDCC + libcv
+    c: `// ColecoVision — C via SDCC + libcv 0.23
 #include <cv.h>
+#include <string.h>
 
 void main(void) {
-  cv_set_screen_mode(CV_TEXTMODE_1);
-  cv_puts(10, 12, 0, "HELLO COLECO!");
+  // Standard graphics mode: 32x24 tiles
+  cv_set_screen_mode(CV_SCREENMODE_STANDARD);
+  cv_set_screen_active(true);
+  cv_set_colors(CV_COLOR_WHITE, CV_COLOR_BLACK);
+
+  // Write "HELLO COLECO!" to VRAM starting at row 2, col 4
+  const char *msg = "HELLO COLECO!";
+  cv_set_write_vram_address(2 * 32 + 4);
+  for (const char *p = msg; *p; p++)
+    cv_voutb((uint8_t)*p);
+
   while(1) {}
 }`,
     asm: `; ColecoVision Z80 assembly
