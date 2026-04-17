@@ -367,6 +367,19 @@ async function getEngine() {
     const res = await fetch(bundleUrl);
     if (!res.ok)
         throw new Error(`retro-compile: cannot load engine from ${bundleUrl} (${res.status})`);
+    // Before executing the vendor bundle we must ensure importScripts is
+    // explicitly on globalThis. Inside new Function(), `typeof importScripts`
+    // looks up the identifier in the global object — not via scope chain — so
+    // if it was only inherited from WorkerGlobalScope it may not be found.
+    // Emscripten uses ENVIRONMENT_IS_WORKER = typeof importScripts === 'function'
+    // to decide whether to initialize WORKERFS with FileReaderSync. If that
+    // check fails the WORKERFS reader is never set and blob.slice() crashes.
+    if (typeof importScripts === 'function' && !Object.prototype.hasOwnProperty.call(globalThis, 'importScripts')) {
+        try {
+            Object.defineProperty(globalThis, 'importScripts', { value: importScripts, writable: true, configurable: true });
+        }
+        catch { }
+    }
     // eslint-disable-next-line no-new-func
     new Function(await res.text())();
     const eng = globalThis['retroCompileEngine'];
