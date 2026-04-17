@@ -377,7 +377,7 @@ void main(void) {
 
   /* Write "HELLO COLECO!" to VRAM at row 2, col 4 */
   cv_set_write_vram_address(2 * 32 + 4);
-  for (p = "HELLO COLECO!"; *p; p++)
+  for (p = (char *)"HELLO COLECO!"; *p; p++)
     cv_voutb((unsigned char)*p);
 
   while(1) {}
