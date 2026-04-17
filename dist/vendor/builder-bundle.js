@@ -3153,7 +3153,7 @@ function execMain(step, mod, args) {
 }
 /// asm.js / WASM / filesystem loading
 exports.fsMeta = {};
-var fsBlob = {};
+var fsBlob = exports.fsBlob = {};
 var wasmBlob = {};
 // load filesystems for CC65 and others asynchronously
 function loadFilesystem(name) {
@@ -14396,10 +14396,10 @@ _g['retroCompileEngine'] = {
   },
   syncFs: function(meta, blob) {
     var wu = __require("wasmutils");
-    if (!wu || !wu.fsMeta) return;
-    Object.assign(wu.fsMeta, meta);
-    _g['fsBlob'] = _g['fsBlob'] || {};
-    Object.assign(_g['fsBlob'], blob);
+    if (!wu) return;
+    if (wu.fsMeta) Object.assign(wu.fsMeta, meta);
+    // fsBlob is module-private — write through the exported reference we added
+    if (wu.fsBlob) Object.assign(wu.fsBlob, blob);
   },
 };
 

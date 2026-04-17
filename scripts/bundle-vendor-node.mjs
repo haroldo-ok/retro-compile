@@ -177,11 +177,20 @@ _g['exports'] = _g['exports'] || {};
 // Emit each module wrapped in __define(id, factory)
 for (const absPath of ordered) {
   const id  = moduleId(absPath);
-  const src = contents.get(absPath);
+  let src = contents.get(absPath);
+
+  // Special rewrite for wasmutils: export fsBlob so syncFs can write into it
+  // from outside the module closure. Without this, setupFS reads the private
+  // local `var fsBlob = {}` which our syncFs can never reach.
+  if (id === 'wasmutils') {
+    // Change `var fsBlob = {};` to `var fsBlob = exports.fsBlob = {};`
+    src = src.replace(
+      /^(var fsBlob\s*=\s*)\{\}/m,
+      '$1exports.fsBlob = {}'
+    );
+  }
 
   // Rewrite require() calls to use our shim.
-  // The compiled output uses:  var x = require("../common/util")
-  // We need:                   var x = __require("common/util")
   const rewritten = src
     // Remove source map references
     .replace(/\/\/# sourceMappingURL=.*/g, '')
@@ -195,7 +204,6 @@ for (const absPath of ordered) {
       }
     })
     // Replace require("node:...") and require("fs") etc with __require(...)
-    // These return empty objects from our shim, which is fine for browser
     .replace(/\brequire\(['"]([^'"]+)['"]\)/g, `__require("$1")`);
 
   parts.push(`
@@ -261,10 +269,10 @@ _g['retroCompileEngine'] = {
   },
   syncFs: function(meta, blob) {
     var wu = __require("wasmutils");
-    if (!wu || !wu.fsMeta) return;
-    Object.assign(wu.fsMeta, meta);
-    _g['fsBlob'] = _g['fsBlob'] || {};
-    Object.assign(_g['fsBlob'], blob);
+    if (!wu) return;
+    if (wu.fsMeta) Object.assign(wu.fsMeta, meta);
+    // fsBlob is module-private — write through the exported reference we added
+    if (wu.fsBlob) Object.assign(wu.fsBlob, blob);
   },
 };
 
