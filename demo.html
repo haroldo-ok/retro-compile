@@ -367,19 +367,18 @@ loop:
     id: 'coleco', name: 'ColecoVision', cpu: 'Z80', icon: '🕹️',
     c: `// ColecoVision — C via SDCC + libcv 0.23
 #include <cv.h>
-#include <string.h>
 
 void main(void) {
-  // Standard graphics mode: 32x24 tiles
+  char *p;
+  /* Standard graphics mode: 32x24 tiles */
   cv_set_screen_mode(CV_SCREENMODE_STANDARD);
-  cv_set_screen_active(true);
+  cv_set_screen_active(1);
   cv_set_colors(CV_COLOR_WHITE, CV_COLOR_BLACK);
 
-  // Write "HELLO COLECO!" to VRAM starting at row 2, col 4
-  const char *msg = "HELLO COLECO!";
+  /* Write "HELLO COLECO!" to VRAM at row 2, col 4 */
   cv_set_write_vram_address(2 * 32 + 4);
-  for (const char *p = msg; *p; p++)
-    cv_voutb((uint8_t)*p);
+  for (p = "HELLO COLECO!"; *p; p++)
+    cv_voutb((unsigned char)*p);
 
   while(1) {}
 }`,
