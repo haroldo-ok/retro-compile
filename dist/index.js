@@ -1,133 +1,87 @@
 // ─── retro-compile public entry point ───────────────────────────────────────
 import { WorkerBridge } from './core/bridge.js';
 import { compileInThread, configureInThread } from './core/in-thread.js';
-// ---------------------------------------------------------------------------
-// Module state
-// ---------------------------------------------------------------------------
 let _bridge = null;
 let _baseUrl = './';
+let _vendorUrl = './vendor/';
 let _noWorker = false;
 let _initiated = false;
 // ---------------------------------------------------------------------------
 // init()
 // ---------------------------------------------------------------------------
-/**
- * Initialise retro-compile.
- *
- * Must be called once before `compile()` or `precompile()`. Spawns the
- * compiler Web Worker and waits for it to report ready.
- *
- * Safe to call multiple times — idempotent after the first call.
- *
- * @example
- * ```ts
- * await init({ baseUrl: 'https://cdn.example.com/retro-compile/' });
- * ```
- */
 export async function init(opts = {}) {
     if (_initiated)
         return;
     _initiated = true;
-    _baseUrl = opts.baseUrl ?? detectBaseUrl();
     _noWorker = opts.noWorker ?? false;
+    if (opts.baseUrl) {
+        // Caller provided an explicit assets base URL — resolve it to absolute
+        // on the main thread where location.href is the page URL.
+        _baseUrl = resolveAbsolute(opts.baseUrl);
+        // Vendor bundle lives at ../vendor/ relative to the assets dir.
+        // e.g. baseUrl = http://localhost:4321/dist/assets/
+        //   → vendorUrl = http://localhost:4321/dist/vendor/
+        _vendorUrl = resolveAbsolute(opts.baseUrl + '../vendor/');
+    }
+    else {
+        // Default: co-located with the library module
+        _baseUrl = detectModuleBase();
+        _vendorUrl = resolveAbsolute(_baseUrl + '../vendor/');
+    }
     if (_noWorker) {
-        // In-thread mode: no Worker, compiles directly on calling thread.
-        // Useful in Node.js, test environments, and restricted origins.
         configureInThread(_baseUrl);
         return;
     }
-    const workerUrl = resolveWorkerUrl();
-    _bridge = WorkerBridge.create(workerUrl, _baseUrl);
+    const workerUrl = resolveAbsolute(new URL('./worker/worker.bundle.js', import.meta.url).href);
+    _bridge = WorkerBridge.create(workerUrl, _baseUrl, _vendorUrl);
 }
 // ---------------------------------------------------------------------------
 // precompile()
 // ---------------------------------------------------------------------------
-/**
- * Warm up the compiler for a platform.
- *
- * Triggers background loading of the platform's Wasm toolchain and standard
- * library filesystem pack. Call this after `init()` and before the user is
- * likely to hit "Compile" to eliminate cold-start latency on the first build.
- *
- * Safe to call multiple times — assets are cached after first load.
- *
- * @example
- * ```ts
- * await init({ baseUrl: '...' });
- * precompile('gb');  // fire-and-forget — no need to await
- * ```
- */
 export function precompile(platform) {
-    if (_noWorker)
-        return; // in-thread mode: nothing to preload
-    _bridge?.precompile(platform);
+    if (!_bridge)
+        return;
+    _bridge.precompile(platform);
 }
 // ---------------------------------------------------------------------------
 // compile()
 // ---------------------------------------------------------------------------
-/**
- * Compile source code for a retro platform.
- *
- * Resolves with a {@link CompileResult}. Discriminate on `.ok`:
- *
- * ```ts
- * const result = await compile({ platform: 'gb', source: myCode });
- * if (result.ok) {
- *   loadROM(result.rom); // Uint8Array — ready for any emulator
- * } else {
- *   for (const e of result.errors) console.error(`${e.path}:${e.line} ${e.message}`);
- * }
- * ```
- *
- * @throws If `init()` has not been called.
- */
 export async function compile(opts) {
-    assertInitialised();
-    if (_noWorker) {
-        return compileInThread(opts);
+    if (!_initiated) {
+        throw new Error('retro-compile: call init() before compile().\n' +
+            'Example: await init({ baseUrl: "/dist/assets/" });');
     }
+    if (_noWorker)
+        return compileInThread(opts);
     return _bridge.compile(opts);
 }
 // ---------------------------------------------------------------------------
 // destroy()
 // ---------------------------------------------------------------------------
-/**
- * Shut down the compiler worker and release all resources.
- * After this call `compile()` and `precompile()` will throw until
- * `init()` is called again.
- */
 export function destroy() {
     _bridge?.terminate();
     _bridge = null;
     _initiated = false;
 }
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Helpers
 // ---------------------------------------------------------------------------
-function assertInitialised() {
-    if (!_initiated) {
-        throw new Error('retro-compile: call init() before compile().\n' +
-            'Example: await init({ baseUrl: "/retro-compile/" });');
-    }
-}
-/**
- * Resolve the URL of the Web Worker bundle.
- * In ESM: co-located with the main bundle.
- * Falls back to a predictable path relative to the base URL.
- */
-function resolveWorkerUrl() {
+/** Resolve a URL to absolute using the page's location as anchor. */
+function resolveAbsolute(url) {
+    if (url.startsWith('http://') || url.startsWith('https://'))
+        return url;
     try {
-        return new URL('./worker.js', import.meta.url).href;
+        return new URL(url, location.href).href;
     }
-    catch {
-        return _baseUrl + 'worker.js';
+    catch { /* no location */ }
+    try {
+        return new URL(url, import.meta.url).href;
     }
+    catch { /* no meta */ }
+    return url;
 }
-/**
- * Best-effort detection of the base URL for asset loading.
- * Works in ESM (import.meta.url), degrades gracefully to './'.
- */
-function detectBaseUrl() {
+/** Detect the directory containing this module file. */
+function detectModuleBase() {
     try {
         return new URL('./', import.meta.url).href;
     }

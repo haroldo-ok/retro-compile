@@ -93,6 +93,8 @@
   .platform-name { font-size: 13px; }
   .platform-cpu  { font-size: 10px; color: #555; }
   .platform-btn.active .platform-cpu { color: #6050aa; }
+  .platform-btn.unavailable { opacity: 0.38; cursor: not-allowed; }
+  .platform-btn.unavailable .platform-cpu::after { content: ' — unavailable'; }
 
   .lang-toggle {
     display: flex;
@@ -560,14 +562,16 @@ function buildPlatformList() {
   list.innerHTML = '';
   for (const p of PLATFORMS) {
     const btn = document.createElement('button');
-    btn.className = 'platform-btn' + (p.id === currentPlatform.id ? ' active' : '');
+    btn.className = 'platform-btn'
+      + (p.id === currentPlatform.id ? ' active' : '')
+      + (p.unavailable ? ' unavailable' : '');
     btn.innerHTML = `
       <span class="platform-icon">${p.icon}</span>
       <span class="platform-info">
         <span class="platform-name">${p.name}</span>
         <span class="platform-cpu">${p.cpu}</span>
       </span>`;
-    btn.onclick = () => selectPlatform(p);
+    btn.onclick = () => { if (!p.unavailable) selectPlatform(p); };
     list.appendChild(btn);
   }
 }
@@ -760,7 +764,7 @@ try {
 
   log('Calling init()…', 'inf');
   await compileLib.init({
-    baseUrl: './dist/assets/',
+    baseUrl: location.origin + '/dist/assets/',
   });
 
   log('✓ Ready', 'ok');

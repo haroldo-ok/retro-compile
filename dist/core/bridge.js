@@ -1,45 +1,29 @@
 // ─── WorkerBridge ────────────────────────────────────────────────────────────
-// Manages the compiler Web Worker: spawning, message routing, and the
-// public compile() call.  All communication is Promise-based; the caller
-// never touches postMessage/onmessage directly.
 import { normaliseErrors } from './errors.js';
-// ---------------------------------------------------------------------------
-// Bridge class
-// ---------------------------------------------------------------------------
-/**
- * Owns the compiler Web Worker and exposes a single `compile()` method.
- * Create via `WorkerBridge.create(opts)`.
- */
 export class WorkerBridge {
-    constructor(worker, baseUrl, ready) {
+    constructor(worker, baseUrl, vendorUrl, ready) {
         this.pending = new Map();
         this.nextId = 1;
         this.worker = worker;
         this.baseUrl = baseUrl;
+        this.vendorUrl = vendorUrl;
         this.ready = ready;
         worker.addEventListener('message', (evt) => {
             this.handleMessage(evt.data);
         });
         worker.addEventListener('error', (evt) => {
-            // Reject all pending calls if the worker dies
             const err = new Error(`retro-compile worker crashed: ${evt.message}`);
             for (const p of this.pending.values())
                 p.reject(err);
             this.pending.clear();
         });
     }
-    // ── Factory ─────────────────────────────────────────────────────────────
-    /**
-     * Spawn a new compiler worker and wait for it to signal ready.
-     * @param workerUrl  URL of the compiled worker bundle (worker.js).
-     * @param baseUrl    Base URL for Wasm blobs and filesystem packs.
-     */
-    static create(workerUrl, baseUrl) {
-        const worker = new Worker(workerUrl, { type: 'module' });
+    static create(workerUrl, baseUrl, vendorUrl) {
+        // Load as a classic worker (no type:'module') so importScripts() works
+        // inside the vendor bundle which uses it to load Wasm JS glue files.
+        const worker = new Worker(workerUrl);
         let resolveReady;
         const ready = new Promise(r => { resolveReady = r; });
-        // Intercept the first 'ready' message before the bridge object is wired
-        // up — we need to resolve `ready` before any compile() calls come in.
         const earlyHandler = (evt) => {
             if (evt.data?.type === 'ready') {
                 worker.removeEventListener('message', earlyHandler);
@@ -47,35 +31,19 @@ export class WorkerBridge {
             }
         };
         worker.addEventListener('message', earlyHandler);
-        const bridge = new WorkerBridge(worker, baseUrl, ready);
-        return bridge;
+        return new WorkerBridge(worker, baseUrl, vendorUrl, ready);
     }
-    // ── Public API ──────────────────────────────────────────────────────────
-    /**
-     * Warm up the compiler for a platform by preloading its Wasm modules
-     * and filesystem packs. Call this after init() and before the user
-     * triggers their first compile to eliminate cold-start latency.
-     *
-     * Safe to call multiple times — cached after first load.
-     */
-    async precompile(platform) {
-        await this.ready;
+    precompile(platform) {
         const msg = {
             type: 'preload',
-            fs: platform, // the worker resolves the FS name from the platform
+            fs: platform,
             baseUrl: this.baseUrl,
+            vendorUrl: this.vendorUrl,
         };
         this.worker.postMessage(msg);
-        // preload is fire-and-forget from the bridge's perspective —
-        // the worker handles it asynchronously and the next compile() will
-        // simply find the modules already cached.
     }
-    /**
-     * Compile source code for a retro platform.
-     * Returns a Promise that resolves once the worker finishes.
-     */
     async compile(opts) {
-        await this.ready; // wait until the worker has initialised
+        await this.ready;
         const id = this.nextId++;
         const language = opts.language ?? 'c';
         const files = opts.files ?? {};
@@ -88,10 +56,10 @@ export class WorkerBridge {
             files,
             debug: opts.debug ?? false,
             baseUrl: this.baseUrl,
+            vendorUrl: this.vendorUrl,
         };
         return new Promise((resolve, reject) => {
             this.pending.set(id, { resolve, reject });
-            // Transfer binary file buffers to avoid copying
             const transfers = [];
             for (const v of Object.values(files)) {
                 if (v instanceof Uint8Array)
@@ -100,7 +68,6 @@ export class WorkerBridge {
             this.worker.postMessage(msg, transfers);
         });
     }
-    /** Terminate the worker. After this, `compile()` will always throw. */
     terminate() {
         this.worker.terminate();
         const err = new Error('retro-compile: worker terminated');
@@ -108,26 +75,24 @@ export class WorkerBridge {
             p.reject(err);
         this.pending.clear();
     }
-    // ── Private ─────────────────────────────────────────────────────────────
     handleMessage(msg) {
         if (msg.type === 'ready')
-            return; // handled in factory, ignore duplicates
+            return;
         if (msg.type === 'error') {
             const p = msg.id != null ? this.pending.get(msg.id) : undefined;
             if (p) {
                 this.pending.delete(msg.id);
                 p.reject(new Error(msg.message));
             }
-            else {
+            else
                 console.error('[retro-compile] Worker error:', msg.message);
-            }
             return;
         }
         if (msg.type === 'result') {
             const result = msg;
             const p = this.pending.get(result.id);
             if (!p)
-                return; // stale
+                return;
             this.pending.delete(result.id);
             if (result.ok && result.rom) {
                 p.resolve({

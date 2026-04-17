@@ -1,52 +1,39 @@
 // ─── In-thread compiler (noWorker mode) ─────────────────────────────────────
-// Runs the build pipeline directly on the calling thread.
-// Used when Web Workers are unavailable (Node.js, restricted origins, tests).
-// Will block the thread during compilation — warn callers accordingly.
+// Runs the build pipeline directly on the calling thread — no Web Worker.
+// Used for Node.js environments (CLI, testing, SSR).
 import { PLATFORM_PROFILES } from '../platforms/profiles.js';
 import { normaliseErrors } from './errors.js';
-// ---------------------------------------------------------------------------
-// Node.js / browser-agnostic fetch
-// In Node 18+ fetch is global. In Node 16 we need the node-fetch polyfill
-// or the caller to provide it. We do a best-effort check.
-// ---------------------------------------------------------------------------
+let _baseUrl = './';
+export function configureInThread(baseUrl) {
+    _baseUrl = baseUrl;
+}
+let _engine = null;
+const _fsMeta = {};
+const _fsBlob = {};
 function getFetch() {
     if (typeof fetch === 'function')
         return fetch;
-    throw new Error('retro-compile (noWorker): fetch is not available. ' +
-        'Use Node 18+ or install a fetch polyfill.');
-}
-let _engine = null;
-let _baseUrl = './';
-const _fsMeta = {};
-const _fsBlob = {};
-export function configureInThread(baseUrl) {
-    _baseUrl = baseUrl;
+    throw new Error('retro-compile (noWorker): fetch unavailable. Use Node 18+.');
 }
 async function ensureEngine() {
     if (_engine)
         return _engine;
     const f = getFetch();
-    const bundleUrl = `${_baseUrl}vendor/builder-bundle.js`;
-    const res = await f(bundleUrl);
+    const res = await f(`${_baseUrl}vendor/builder-bundle.js`);
     if (!res.ok)
         throw new Error(`retro-compile: cannot load engine bundle (${res.status})`);
     const code = await res.text();
-    // In Node.js we use vm.runInThisContext so the bundle has access to globalThis.
-    // We access require via globalThis to avoid needing @types/node.
     try {
-        const _require = globalThis['require'];
-        const vm = _require?.('vm');
-        if (vm?.runInThisContext) {
+        // Use vm.runInThisContext in Node so the bundle has access to globalThis
+        const _req = globalThis['require'];
+        const vm = _req?.('vm');
+        if (vm?.runInThisContext)
             vm.runInThisContext(code);
-        }
-        else {
-            // eslint-disable-next-line no-new-func
-            new Function(code)();
-        }
+        else
+            new Function(code)(); // eslint-disable-line no-new-func
     }
     catch {
-        // eslint-disable-next-line no-new-func
-        new Function(code)();
+        new Function(code)(); // eslint-disable-line no-new-func
     }
     const eng = globalThis['retroCompileEngine'];
     if (!eng)
@@ -74,7 +61,7 @@ async function ensureFilesystem(name) {
     _engine?.syncFs?.(_fsMeta, _fsBlob);
 }
 // ---------------------------------------------------------------------------
-// Profile → params
+// Build helpers
 // ---------------------------------------------------------------------------
 function profileToParams(p) {
     return {
@@ -91,7 +78,7 @@ function firstTool(profile, language) {
     return language === 'asm' ? profile.asmAssembler : profile.cCompiler;
 }
 // ---------------------------------------------------------------------------
-// Public compile function (in-thread)
+// Public compile function
 // ---------------------------------------------------------------------------
 export async function compileInThread(opts) {
     const platform = opts.platform;
@@ -100,8 +87,10 @@ export async function compileInThread(opts) {
     if (!profile) {
         return { ok: false, errors: [{ line: 0, message: `Unknown platform: ${platform}`, severity: 'error' }] };
     }
-    // Load FS packs
-    await Promise.all(profile.filesystems.map(f => ensureFilesystem(f)));
+    if (profile.unavailable) {
+        return { ok: false, errors: [{ line: 0, message: profile.unavailable, severity: 'error' }] };
+    }
+    await Promise.all(profile.filesystems.map((f) => ensureFilesystem(f)));
     const engine = await ensureEngine();
     engine.PLATFORM_PARAMS[platform] = profileToParams(profile);
     engine.store.reset();
@@ -119,7 +108,11 @@ export async function compileInThread(opts) {
     if ('errors' in result) {
         const raw = result['errors'];
         if (raw?.length) {
-            return { ok: false, errors: normaliseErrors(raw.map(e => ({ line: e['line'] ?? 0, msg: e['msg'] ?? 'Error', path: e['path'] }))) };
+            return { ok: false, errors: normaliseErrors(raw.map(e => ({
+                    line: e['line'] ?? 0,
+                    msg: e['msg'] ?? 'Error',
+                    path: e['path'],
+                }))) };
         }
     }
     if ('output' in result && result['output']) {

@@ -174,7 +174,7 @@ export const PLATFORM_PROFILES = {
         cCompiler: 'cc65',
         asmAssembler: 'ca65',
         linker: 'ld65',
-        filesystems: ['65-atari2600'],
+        filesystems: ['65-sim6502'], // archive ships sim6502 instead of atari2600
         code_start: 0x1000,
         data_start: 0x80,
         data_size: 0x80,

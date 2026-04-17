@@ -62,6 +62,11 @@ export interface PlatformProfile {
     libargs?: string[];
     /** Trigger Game Boy header checksum patching after link. */
     gbChecksumPatch?: boolean;
+    /**
+     * If true, this platform cannot be compiled with the current asset set.
+     * compile() will return an error immediately rather than failing mid-build.
+     */
+    unavailable?: string;
 }
 export declare const PLATFORM_PROFILES: Record<Platform, PlatformProfile>;
 /** Convenience — look up a profile and throw clearly if it's missing. */

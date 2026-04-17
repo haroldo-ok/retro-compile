@@ -1,13 +1,10 @@
 import type { Platform, Language } from '../types.js';
-/** Ask the worker to preload a named filesystem pack. */
 export interface PreloadMessage {
     type: 'preload';
-    /** Filesystem name, e.g. `'sdcc'` or `'65-nes'`. */
     fs: string;
-    /** Base URL where `fs<name>.js` and `fs<name>.js.metadata` live. */
     baseUrl: string;
+    vendorUrl: string;
 }
-/** Ask the worker to compile source for a platform. */
 export interface CompileMessage {
     type: 'compile';
     id: number;
@@ -16,18 +13,18 @@ export interface CompileMessage {
     source: string;
     files: Record<string, string | Uint8Array>;
     debug: boolean;
+    /** Base URL for Wasm binaries and FS packs (dist/assets/). */
     baseUrl: string;
+    /** URL for the vendor engine bundle (dist/vendor/). */
+    vendorUrl: string;
 }
-/** Reset the worker's in-memory file store. */
 export interface ResetMessage {
     type: 'reset';
 }
 export type InboundMessage = PreloadMessage | CompileMessage | ResetMessage;
-/** Worker is ready to receive compile requests. */
 export interface ReadyMessage {
     type: 'ready';
 }
-/** A compile job finished (success or failure). */
 export interface CompileResultMessage {
     type: 'result';
     id: number;
@@ -54,7 +51,6 @@ export interface CompileResultMessage {
         severity: 'error' | 'warning';
     }>;
 }
-/** Worker encountered an internal error (not a compile error). */
 export interface WorkerErrorMessage {
     type: 'error';
     id?: number;

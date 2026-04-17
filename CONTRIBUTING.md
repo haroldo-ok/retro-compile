@@ -10,17 +10,17 @@ src/
     bridge.ts               WorkerBridge — Worker lifetime + Promise routing
     errors.ts               Error normalisation (all tool formats → CompileError)
     in-thread.ts            noWorker / Node.js in-thread compiler
-    protocol.ts             Typed internal Worker message protocol
+    protocol.ts             Typed Worker ↔ main thread message protocol
   platforms/
     profiles.ts             PlatformProfile registry (14 platforms)
   worker/
     worker.ts               Compiler Web Worker entry point
     engine-adapter.ts       Shim that registers 8bws internals as retroCompileEngine
 scripts/
-  build-vendor.mjs          Bundles 8bitworkshop builder → dist/vendor/builder-bundle.js
+  bundle-vendor-node.mjs    Pure Node.js bundler — no esbuild needed
   copy-assets.mjs           Copies Wasm + FS packs from 8bws → dist/assets/
 test/
-  integration.test.mjs      29-test suite (no framework required)
+  integration.test.mjs      30-test suite (plain node, no test framework)
 ```
 
 ## Development setup
@@ -29,42 +29,58 @@ You need two repos side by side:
 
 ```
 repos/
-  retro-compile/         ← this repo
-  8bitworkshop-master/   ← https://github.com/sehugg/8bitworkshop
+  retro-compile/           ← this repo
+  8bitworkshop/            ← https://github.com/sehugg/8bitworkshop
+                             (or a pre-compiled archive/zip)
 ```
 
-### 1. Clone and build 8bitworkshop
+### Option A — From a pre-compiled 8bitworkshop archive
+
+If you have a `.7z` or `.zip` that already contains `src/worker/wasm/*.wasm`
+and `src/worker/fs/*.data` (i.e. the Emscripten build has already been run),
+you do **not** need Emscripten or `make`. You just need to compile the
+TypeScript source for the worker pipeline:
+
+```bash
+cd /path/to/8bitworkshop
+tsc -p src/common/tsconfig.json
+tsc -p src/worker/tsconfig.json
+```
+
+### Option B — From a clean 8bitworkshop clone
 
 ```bash
 git clone https://github.com/sehugg/8bitworkshop
 cd 8bitworkshop
+# Install Emscripten first: https://emscripten.org/docs/getting_started/
 npm install
-make        # builds all Wasm toolchain binaries (takes ~5 min)
+make          # builds all Wasm toolchain binaries (~5-10 min)
 npm run tsbuild
 ```
 
-### 2. Set up retro-compile
+### Set up retro-compile
 
 ```bash
-cd ../retro-compile
-npm install
+cd retro-compile
+npm install   # only installs typescript — no esbuild needed
 npm run typecheck
 ```
 
-### 3. Build the full distribution
+### Build everything
 
 ```bash
-# Build TypeScript → dist/
+# 1. Copy Wasm binaries and FS packs from 8bws into dist/assets/
+node scripts/copy-assets.mjs --8bws /path/to/8bitworkshop
+
+# 2. Bundle the 8bws builder pipeline into a single IIFE
+#    (uses only Node.js built-ins — no esbuild, no npm install required)
+node scripts/bundle-vendor-node.mjs --8bws /path/to/8bitworkshop
+
+# 3. Compile the library TypeScript
 tsc
-
-# Bundle 8bitworkshop's builder into the engine IIFE
-node scripts/build-vendor.mjs --8bws ../8bitworkshop
-
-# Copy Wasm blobs and FS packs
-node scripts/copy-assets.mjs --8bws ../8bitworkshop
 ```
 
-### 4. Run tests
+### Run tests
 
 ```bash
 npm test
@@ -72,88 +88,113 @@ npm test
 node test/integration.test.mjs
 ```
 
-### 5. Try the demo
+### Try the demo
 
 ```bash
-npx serve . -p 4321
+npm run demo
 # open http://localhost:4321/demo.html
 ```
+
+---
+
+## How bundle-vendor-node.mjs works
+
+This script replaces a traditional esbuild/webpack bundler with a pure
+Node.js approach:
+
+1. Compiles `builder.ts`, `platforms.ts`, and `workertools.ts` to CommonJS
+   using `tsc` (already in the archive/repo)
+2. Walks the `require()` graph starting from those three entry points,
+   collecting all local module files in topological order
+3. Wraps each module in a minimal CJS shim (`__define` / `__require`)
+4. Emits a single IIFE that:
+   - Inlines all 35 modules
+   - Provides browser/Worker-safe global shims
+   - Wires the XHR interceptor for `lib/` file rewrites
+   - Registers `globalThis.retroCompileEngine` with `store`, `builder`,
+     `PLATFORM_PARAMS`, `configure`, and `syncFs`
+
+The result (`dist/vendor/builder-bundle.js`) is fetched and executed by the
+compiler Web Worker at runtime via `new Function(code)()`.
+
+---
 
 ## Adding a new platform
 
 1. Add the platform ID to the `Platform` union in `src/types.ts`
 2. Add a `PlatformProfile` entry in `src/platforms/profiles.ts`
-3. Add a sample code snippet in `demo.html`'s `PLATFORMS` array
-4. Add the platform to the test matrix in `test/integration.test.mjs`
-5. Verify the Wasm modules and FS packs it needs are covered by
-   `scripts/copy-assets.mjs`
+3. Add a sample snippet to `demo.html`'s `PLATFORMS` array
+4. Add it to the test matrix in `test/integration.test.mjs`
+5. Verify the required Wasm modules and FS packs exist in `dist/assets/`
 
 ### Profile checklist
 
 - [ ] `name` — human-readable display name
-- [ ] `arch` — one of `'z80' | 'gbz80' | '6502' | '6809' | 'arm32'`
-- [ ] `cCompiler` — tool that handles C→ASM (e.g. `'sdcc'`, `'cc65'`)
-- [ ] `asmAssembler` — tool that handles ASM→OBJ
-- [ ] `linker` — tool that handles OBJ→binary
-- [ ] `filesystems` — Emscripten FS pack names to preload (from `src/worker/fs/`)
-- [ ] `code_start` / `data_start` — memory map addresses (hex is fine)
+- [ ] `arch` — `'z80' | 'gbz80' | '6502' | '6809' | 'arm32'`
+- [ ] `cCompiler` / `asmAssembler` / `linker` — tool IDs
+- [ ] `filesystems` — FS pack names to preload (from `src/worker/fs/`)
+- [ ] `code_start` / `data_start` — memory map (hex is fine)
 - [ ] `rom_size` / `data_size` — if bounded
 - [ ] `extra_link_files` / `extra_link_args` — platform runtime libs
-- [ ] `defines` — `#define` symbols injected by the preprocessor
+- [ ] `defines` — preprocessor symbols
 - [ ] `cfgfile` / `libargs` — for CC65/LD65 platforms
 
-## How compilation works (end to end)
+---
+
+## Data-flow (end to end)
 
 ```
 User calls compile({ platform: 'gb', source: '...' })
   ↓
-index.ts — validates init() was called, forwards to WorkerBridge
+index.ts — checks init(), forwards to WorkerBridge
   ↓
 bridge.ts — posts CompileMessage to Web Worker with correlation ID
   ↓
-worker.ts — receives message, resolves platform profile
+worker.ts — resolves platform profile
+  ↓ (parallel)
+  ├─ preloadWasm()  — fetch .js glue + .wasm for each required tool
+  └─ preloadFilesystem() — fetch .metadata + .data for each FS pack
   ↓
-worker.ts — preloadWasm() fetches .js glue + .wasm binary for each tool
-worker.ts — preloadFilesystem() fetches .metadata + .data for each FS pack
+worker.ts — getEngine() fetches dist/vendor/builder-bundle.js, executes it
+            engine-adapter.ts registers retroCompileEngine on globalThis
   ↓
-worker.ts — getEngine() fetches vendor/builder-bundle.js, runs it
-           engine-adapter.ts registers on globalThis.retroCompileEngine
+worker.ts — engine.configure() installs XHR interceptor for lib/ paths
+            engine.syncFs() pushes preloaded FS blobs into emglobal scope
   ↓
-worker.ts — engine.store.reset(), populates files, injects profile params
-worker.ts — engine.builder.handleMessage() runs the full pipeline:
-             sdcc → (C→ASM) → sdasgb → (ASM→REL) → sdldz80 → (REL→IHX→ROM)
+worker.ts — store.reset(), populate files, inject profile params
+            builder.handleMessage() runs the full tool pipeline:
+            sdcc → sdasgb → sdldz80 → ROM (for Game Boy)
+            cc65 → ca65 → ld65 → ROM (for NES/C64)
   ↓
-worker.ts — applies GB checksum patch if profile.gbChecksumPatch
-worker.ts — posts CompileResultMessage back with ROM Uint8Array
+worker.ts — applies GB header checksum patch if profile.gbChecksumPatch
+            posts CompileResultMessage back (ROM transferred, not copied)
   ↓
-bridge.ts — resolves the pending Promise with CompileSuccess
+bridge.ts — resolves pending Promise with CompileSuccess
   ↓
-User receives { ok: true, rom: Uint8Array }
+User: { ok: true, rom: Uint8Array }
 ```
+
+---
 
 ## Coding conventions
 
-- All public types in `src/types.ts` — nothing internal leaks
-- `.js` extensions on all relative imports (required by node16 module resolution)
-- Error matchers return `void` and mutate an `errors` array — keeps them composable
-- Worker ↔ main thread communication is always typed via `protocol.ts`
-- No `any` without a comment explaining why
+- All public types live in `src/types.ts` — nothing internal leaks through
+- `.js` extensions on all relative imports (node16 module resolution)
+- Error matchers mutate an `errors[]` array — keeps them composable
+- Worker ↔ main thread is always typed via `protocol.ts`
+- No `any` without a comment
 
 ## Testing philosophy
 
-Tests run with plain `node` — no Jest, no Mocha, no test runner to install.
-The `tryImport()` helper tries TypeScript source first (if running with tsx)
-then compiled JS, so tests work in both modes.
-
-Each suite is a logical group. Within a suite, `test()` calls are sequential.
-Failures don't stop the suite — all tests always run so you see the full picture.
+Tests run with plain `node` — no Jest, no Mocha. `tryImport()` tries TypeScript
+source first, then compiled JS, so tests work in both modes. Each suite is a
+logical group; failures don't stop the suite so you always see the full picture.
 
 ## Releasing
 
 ```bash
-tsc                    # type-check + emit declarations
-# run full build + asset pipeline
-npm test               # must be 0 failures
+tsc                    # type-check + emit
+node test/integration.test.mjs   # must be 0 failures
 npm version patch      # or minor / major
 npm publish
 ```

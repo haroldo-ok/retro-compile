@@ -6,31 +6,67 @@ import { PLATFORM_PROFILES } from '../platforms/profiles.js';
 // Global state
 // ---------------------------------------------------------------------------
 let _baseUrl = './';
+let _vendorUrl = './vendor/';
 const _loadedScripts = new Set();
 const _wasmBinaries = {};
 const _fsMeta = {};
 const _fsBlob = {};
-// Emscripten shims
+// Emscripten shims — `self` and `window` are read-only getters on
+// WorkerGlobalScope, so direct assignment throws. Use defineProperty with
+// a try/catch so we silently skip any that are non-configurable (they're
+// already the right value in a Worker context anyway).
 const g = globalThis;
-g['self'] = globalThis;
-g['window'] = globalThis;
+function shimGlobal(key, value) {
+    if (g[key] === value)
+        return; // already correct
+    try {
+        Object.defineProperty(globalThis, key, {
+            value, writable: true, configurable: true,
+        });
+    }
+    catch {
+        // Non-configurable and already the correct value — safe to ignore.
+    }
+}
+shimGlobal('self', globalThis);
+shimGlobal('window', globalThis);
 if (!g['location'])
-    g['location'] = { href: './' };
+    shimGlobal('location', { href: './' });
 // ---------------------------------------------------------------------------
 // Asset loading
 // ---------------------------------------------------------------------------
+// Tools that ship only as asm.js (no .wasm companion).
+// For these we skip the binary fetch and load only the JS glue.
+const ASMJS_ONLY = new Set(['mcpp']);
+// Tools that are entirely absent from this build of 8bitworkshop.
+// Attempting to compile for a platform that needs one of these will
+// produce a clear error from the builder rather than a cryptic fetch failure.
+const UNAVAILABLE_TOOLS = new Set([
+// xasm6809 — only needed for direct Vectrex ASM, not C via cmoc
+]);
 async function preloadWasm(name) {
+    if (UNAVAILABLE_TOOLS.has(name)) {
+        throw new Error(`retro-compile: tool '${name}' is not available in this build. ` +
+            `(Game Boy / sdasgb requires a full 8bitworkshop build with Emscripten.)`);
+    }
     const jsUrl = `${_baseUrl}wasm/${name}.js`;
     const binUrl = `${_baseUrl}wasm/${name}.wasm`;
+    // Load the JS glue (works for both Wasm and asm.js-only tools)
     if (!_loadedScripts.has(jsUrl)) {
-        const res = await fetch(jsUrl);
+        // mcpp ships only as asm.js under asmjs/, not wasm/
+        const actualJsUrl = ASMJS_ONLY.has(name)
+            ? `${_baseUrl}asmjs/${name}.js`
+            : jsUrl;
+        const res = await fetch(actualJsUrl);
         if (!res.ok)
-            throw new Error(`retro-compile: cannot fetch ${jsUrl} (${res.status})`);
-        // Run in global scope like importScripts()
+            throw new Error(`retro-compile: cannot fetch ${actualJsUrl} (${res.status})`);
         // eslint-disable-next-line no-new-func
         new Function(await res.text())();
-        _loadedScripts.add(jsUrl);
+        _loadedScripts.add(jsUrl); // key on the canonical jsUrl regardless
     }
+    // Skip binary fetch for asm.js-only tools
+    if (ASMJS_ONLY.has(name))
+        return;
     if (!_wasmBinaries[name]) {
         const res = await fetch(binUrl);
         if (!res.ok)
@@ -58,25 +94,26 @@ async function preloadFilesystem(name) {
         throw new Error(`retro-compile: FS data not found for '${name}'`);
     _fsMeta[name] = await metaRes.json();
     _fsBlob[name] = await dataRes.blob();
-    // Push into engine scope if already loaded
+    // Push into engine if already loaded (compile called after precompile)
+    _engine?.configure?.({ baseUrl: _baseUrl });
     _engine?.syncFs?.(_fsMeta, _fsBlob);
 }
 let _engine = null;
 async function getEngine() {
     if (_engine)
         return _engine;
-    const res = await fetch(`${_baseUrl}vendor/builder-bundle.js`);
+    const bundleUrl = `${_vendorUrl}builder-bundle.js`;
+    const res = await fetch(bundleUrl);
     if (!res.ok)
-        throw new Error(`retro-compile: cannot load engine (${res.status})`);
+        throw new Error(`retro-compile: cannot load engine from ${bundleUrl} (${res.status})`);
     // eslint-disable-next-line no-new-func
     new Function(await res.text())();
     const eng = globalThis['retroCompileEngine'];
     if (!eng)
         throw new Error('retro-compile: engine bundle did not register retroCompileEngine');
-    // Configure the engine with the current baseUrl so its internal XHR
-    // interceptor rewrites lib/ fetches to the correct hosted location.
+    // Configure PWORKER base URL and install the importScripts/XHR shims
     eng.configure?.({ baseUrl: _baseUrl });
-    // Sync any filesystems already preloaded before the engine loaded.
+    // Sync any filesystems already preloaded before the engine loaded
     if (Object.keys(_fsMeta).length)
         eng.syncFs?.(_fsMeta, _fsBlob);
     _engine = eng;
@@ -119,6 +156,10 @@ async function runBuild(msg) {
     if (!profile) {
         return { type: 'result', id: msg.id, ok: false,
             errors: [{ line: 0, message: `Unknown platform: ${platform}`, severity: 'error' }] };
+    }
+    if (profile.unavailable) {
+        return { type: 'result', id: msg.id, ok: false,
+            errors: [{ line: 0, message: `Platform '${platform}' is unavailable: ${profile.unavailable}`, severity: 'error' }] };
     }
     await Promise.all([
         ...requiredModules(profile, language).map(m => preloadWasm(m)),
@@ -198,12 +239,9 @@ self.addEventListener('message', async (evt) => {
         return;
     if (msg.type === 'preload') {
         _baseUrl = msg.baseUrl;
-        // msg.fs may be a raw FS name ('sdcc') or a platform ID ('gb').
-        // Try it as a platform first, then fall back to treating it as an FS name.
+        _vendorUrl = msg.vendorUrl;
         const profile = PLATFORM_PROFILES[msg.fs];
-        const fsNames = profile
-            ? profile.filesystems
-            : [msg.fs];
+        const fsNames = profile ? profile.filesystems : [msg.fs];
         for (const name of fsNames) {
             try {
                 await preloadFilesystem(name);
@@ -216,6 +254,7 @@ self.addEventListener('message', async (evt) => {
     }
     if (msg.type === 'compile') {
         _baseUrl = msg.baseUrl;
+        _vendorUrl = msg.vendorUrl;
         let out;
         try {
             out = await runBuild(msg);
