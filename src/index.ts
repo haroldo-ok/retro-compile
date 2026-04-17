@@ -47,7 +47,7 @@ export async function init(opts: InitOptions = {}): Promise<void> {
   }
 
   const workerUrl = resolveAbsolute(
-    new URL('./worker/worker.js', import.meta.url).href
+    new URL('./worker/worker.bundle.js', import.meta.url).href
   );
   _bridge = WorkerBridge.create(workerUrl, _baseUrl, _vendorUrl);
 }

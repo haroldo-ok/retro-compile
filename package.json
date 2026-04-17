@@ -11,19 +11,17 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs",
       "types": "./dist/index.d.ts"
-    },
-    "./worker": {
-      "import": "./dist/worker/worker.js"
     }
   },
   "files": ["dist", "scripts", "README.md", "CHANGELOG.md", "CONTRIBUTING.md"],
   "scripts": {
-    "build":          "tsc",
+    "build":          "tsc && node scripts/build-worker.mjs",
     "typecheck":      "tsc --noEmit",
     "test":           "node test/integration.test.mjs",
     "bundle:vendor":  "node scripts/bundle-vendor-node.mjs",
     "copy:assets":    "node scripts/copy-assets.mjs",
-    "demo":           "npx serve . -p 4321"
+    "demo":           "npx serve . -p 4321",
+    "build:all":      "npm run build && npm run bundle:vendor && npm run copy:assets"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

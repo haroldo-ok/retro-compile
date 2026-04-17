@@ -34,7 +34,9 @@ export class WorkerBridge {
   }
 
   static create(workerUrl: string, baseUrl: string, vendorUrl: string): WorkerBridge {
-    const worker = new Worker(workerUrl, { type: 'module' });
+    // Load as a classic worker (no type:'module') so importScripts() works
+    // inside the vendor bundle which uses it to load Wasm JS glue files.
+    const worker = new Worker(workerUrl);
 
     let resolveReady!: () => void;
     const ready = new Promise<void>(r => { resolveReady = r; });

@@ -219,7 +219,44 @@ _g['retroCompileEngine'] = {
   builder:         _builder.builder,
   PLATFORM_PARAMS: _platforms.PLATFORM_PARAMS,
   configure: function(opts) {
-    var libBase = (opts.baseUrl || './') + 'lib/';
+    var base    = opts.baseUrl    || './';
+    var libBase = base + 'lib/';
+
+    // Override PWORKER so loadNative()/loadWASM() fetch from our hosted assets.
+    // PWORKER is used as a prefix for both importScripts and XHR calls.
+    _builder.PWORKER = base;
+
+    // Also patch it on the wasmutils module's exported reference
+    var wu = __require("wasmutils");
+    // wasmutils reads PWORKER from builder at call time via builder_1.PWORKER,
+    // so patching _builder is sufficient. But guard anyway:
+    if (wu && 'PWORKER' in wu) wu.PWORKER = base;
+
+    // Shim importScripts to fetch-and-eval synchronously when called from
+    // inside new Function() (the vendor bundle context).
+    // In a classic worker importScripts() IS available, so this is only
+    // needed as a fallback / path-rewrite layer.
+    var origImportScripts = _g['importScripts'];
+    _g['importScripts'] = function(url) {
+      // Rewrite relative paths that originate inside 8bws source tree
+      // e.g. "../../src/worker/wasm/sdcc.js" → base + "wasm/sdcc.js"
+      var m = url.match(/(?:wasm|asmjs)\\/([^/]+\\.js)$/);
+      if (m) {
+        var dir = url.indexOf('/asmjs/') >= 0 ? 'asmjs/' : 'wasm/';
+        url = base + dir + m[1];
+      }
+      if (origImportScripts) {
+        origImportScripts.call(_g, url);
+      } else {
+        // Fallback: synchronous XHR + eval (for non-worker contexts)
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, false);
+        xhr.send(null);
+        if (xhr.status === 200) new Function(xhr.responseText)();
+        else throw new Error('importScripts failed: ' + url + ' (' + xhr.status + ')');
+      }
+    };
+
     _installXhrInterceptor(libBase);
   },
   syncFs: function(meta, blob) {

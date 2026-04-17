@@ -32,7 +32,7 @@ export async function init(opts = {}) {
         configureInThread(_baseUrl);
         return;
     }
-    const workerUrl = resolveAbsolute(new URL('./worker/worker.js', import.meta.url).href);
+    const workerUrl = resolveAbsolute(new URL('./worker/worker.bundle.js', import.meta.url).href);
     _bridge = WorkerBridge.create(workerUrl, _baseUrl, _vendorUrl);
 }
 // ---------------------------------------------------------------------------
